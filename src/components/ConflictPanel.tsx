@@ -6,13 +6,17 @@ interface ConflictDetail {
   id: string
   cart1Name: string
   cart1Speed: number
+  cart1Battery: number
+  cart1MaxBattery: number
   cart1Id: string
   cart2Name: string
   cart2Speed: number
+  cart2Battery: number
+  cart2MaxBattery: number
   cart2Id: string
   duration: number
   firstSeenDay: number
-  lowSpeedCartId: string
+  lowBatteryCartId: string
 }
 
 interface GroupedConflict {
@@ -42,7 +46,9 @@ export default function ConflictPanel() {
       const track = tracks.find(t => t.id === conflict.trackId)
       if (!cart1 || !cart2 || !track) continue
 
-      const lowSpeedCartId = cart1.speed <= cart2.speed ? cart1.id : cart2.id
+      const cart1BatteryRatio = cart1.currentBattery / cart1.maxBattery
+      const cart2BatteryRatio = cart2.currentBattery / cart2.maxBattery
+      const lowBatteryCartId = cart1BatteryRatio <= cart2BatteryRatio ? cart1.id : cart2.id
 
       if (!trackMap.has(conflict.trackId)) {
         trackMap.set(conflict.trackId, {
@@ -59,13 +65,17 @@ export default function ConflictPanel() {
         id: conflict.id,
         cart1Name: cart1.name,
         cart1Speed: cart1.speed,
+        cart1Battery: cart1.currentBattery,
+        cart1MaxBattery: cart1.maxBattery,
         cart1Id: cart1.id,
         cart2Name: cart2.name,
         cart2Speed: cart2.speed,
+        cart2Battery: cart2.currentBattery,
+        cart2MaxBattery: cart2.maxBattery,
         cart2Id: cart2.id,
         duration: conflict.duration,
         firstSeenDay: conflict.firstSeenDay,
-        lowSpeedCartId,
+        lowBatteryCartId,
       })
       group.totalDuration = Math.max(group.totalDuration, conflict.duration)
     }
@@ -198,22 +208,22 @@ export default function ConflictPanel() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
-                          const cart = carts.find(c => c.id === conflict.lowSpeedCartId)
+                          const cart = carts.find(c => c.id === conflict.lowBatteryCartId)
                           if (cart?.isPaused) {
-                            resumeCart(conflict.lowSpeedCartId)
+                            resumeCart(conflict.lowBatteryCartId)
                           } else {
                             pauseLowSpeedCartInConflict(conflict.id)
                           }
                         }}
                         className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold transition-colors ${
-                          carts.find(c => c.id === conflict.lowSpeedCartId)?.isPaused
+                          carts.find(c => c.id === conflict.lowBatteryCartId)?.isPaused
                             ? "bg-[#ffd70022] border border-[#ffd70044] text-[#ffd700] hover:bg-[#ffd70033]"
                             : "bg-[#ff888811] border border-[#ff666633] text-[#ff6666] hover:bg-[#ff666622]"
                         }`}
                       >
                         <Pause size={10} />
-                        {carts.find(c => c.id === conflict.lowSpeedCartId)?.isPaused
-                          ? "恢复低速车"
+                        {carts.find(c => c.id === conflict.lowBatteryCartId)?.isPaused
+                          ? "恢复低电车"
                           : "暂停低电车"}
                       </button>
                       <button

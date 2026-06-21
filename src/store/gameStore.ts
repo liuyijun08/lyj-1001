@@ -639,18 +639,20 @@ export const useGameStore = create<GameState & GameActions>()(
         const cart2 = state.carts.find(c => c.id === conflict.cartId2)
         if (!cart1 || !cart2) return
 
-        const lowSpeedCart = cart1.speed <= cart2.speed ? cart1 : cart2
+        const cart1BatteryRatio = cart1.currentBattery / cart1.maxBattery
+        const cart2BatteryRatio = cart2.currentBattery / cart2.maxBattery
+        const lowBatteryCart = cart1BatteryRatio <= cart2BatteryRatio ? cart1 : cart2
         const track = state.tracks.find(t => t.id === conflict.trackId)
-        const pauseDuration = track ? (track.length / lowSpeedCart.speed) * 1.5 : 5
+        const pauseDuration = track ? (track.length / lowBatteryCart.speed) * 1.5 : 5
 
         set(s => ({
           carts: s.carts.map(c =>
-            c.id === lowSpeedCart.id
+            c.id === lowBatteryCart.id
               ? { ...c, isPaused: true, pauseRemaining: Math.max(c.pauseRemaining, pauseDuration) }
               : c
           ),
         }))
-        get().showNotification(`已暂停低速矿车 ${lowSpeedCart.name} ${pauseDuration.toFixed(1)} 秒`, "success")
+        get().showNotification(`已暂停低电矿车 ${lowBatteryCart.name} ${pauseDuration.toFixed(1)} 秒`, "success")
       },
 
       staggerDeparture: (conflictId) => {
@@ -662,19 +664,20 @@ export const useGameStore = create<GameState & GameActions>()(
         const cart2 = state.carts.find(c => c.id === conflict.cartId2)
         if (!cart1 || !cart2) return
 
-        const slowCart = cart1.speed <= cart2.speed ? cart1 : cart2
-        const fastCart = cart1.speed > cart2.speed ? cart1 : cart2
+        const cart1BatteryRatio = cart1.currentBattery / cart1.maxBattery
+        const cart2BatteryRatio = cart2.currentBattery / cart2.maxBattery
+        const lowBatteryCart = cart1BatteryRatio <= cart2BatteryRatio ? cart1 : cart2
         const track = state.tracks.find(t => t.id === conflict.trackId)
-        const delayDuration = track ? (track.length / slowCart.speed) * 2 : 8
+        const delayDuration = track ? (track.length / lowBatteryCart.speed) * 2 : 8
 
         set(s => ({
           carts: s.carts.map(c =>
-            c.id === slowCart.id
+            c.id === lowBatteryCart.id
               ? { ...c, departureDelay: Math.max(c.departureDelay, delayDuration) }
               : c
           ),
         }))
-        get().showNotification(`${slowCart.name} 下次出发将延迟 ${delayDuration.toFixed(1)} 秒`, "success")
+        get().showNotification(`${lowBatteryCart.name} 下次出发将延迟 ${delayDuration.toFixed(1)} 秒`, "success")
       },
 
       resetGame: () => {
