@@ -47,6 +47,9 @@ export interface Cart {
   miningProgress: number
   x: number
   y: number
+  isPaused: boolean
+  pauseRemaining: number
+  departureDelay: number
 }
 
 export interface Resources {
@@ -65,9 +68,12 @@ export interface DayLog {
 }
 
 export interface ConflictInfo {
+  id: string
   cartId1: string
   cartId2: string
   trackId: string
+  duration: number
+  firstSeenDay: number
 }
 
 export interface GameState {

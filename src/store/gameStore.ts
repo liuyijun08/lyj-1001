@@ -68,6 +68,10 @@ interface GameActions {
   showNotification: (message: string, type: "success" | "error" | "info") => void
   hideNotification: () => void
   isMineReachable: (mineId: string) => boolean
+  pauseCart: (cartId: string, duration: number) => void
+  resumeCart: (cartId: string) => void
+  pauseLowSpeedCartInConflict: (conflictId: string) => void
+  staggerDeparture: (conflictId: string) => void
 }
 
 const initialState = {
@@ -235,6 +239,9 @@ export const useGameStore = create<GameState & GameActions>()(
           miningProgress: 0,
           x: state.basePosition.x,
           y: state.basePosition.y,
+          isPaused: false,
+          pauseRemaining: 0,
+          departureDelay: 0,
         }
 
         set(s => ({
@@ -255,7 +262,6 @@ export const useGameStore = create<GameState & GameActions>()(
         let newResources = { ...state.resources }
         let newCarts = state.carts.map(c => ({ ...c }))
         let newMines = state.mineNodes.map(m => ({ ...m }))
-        let newConflicts: ConflictInfo[] = []
         let showSettlement = state.showSettlement || newDayProgress >= DAY_DURATION
         let newIsPaused = showSettlement && !state.showSettlement
         const dailyCollectedAcc: Record<MineralType, number> = { ...state.dailyCollected }
@@ -267,6 +273,19 @@ export const useGameStore = create<GameState & GameActions>()(
 
         for (let i = 0; i < newCarts.length; i++) {
           const cart = newCarts[i]
+
+          if (cart.isPaused && cart.pauseRemaining > 0) {
+            cart.pauseRemaining = Math.max(0, cart.pauseRemaining - effectiveDt)
+            if (cart.pauseRemaining <= 0) {
+              cart.isPaused = false
+            }
+            continue
+          }
+
+          if (cart.departureDelay > 0 && cart.status === "toMine" && cart.trackProgress === 0) {
+            cart.departureDelay = Math.max(0, cart.departureDelay - effectiveDt)
+            continue
+          }
 
           if (cart.status === "toMine") {
             const track = state.tracks.find(t => t.id === cart.currentTrackId)
@@ -451,16 +470,35 @@ export const useGameStore = create<GameState & GameActions>()(
 
         const trackCartMap: Record<string, string[]> = {}
         for (const c of newCarts) {
-          if (c.currentTrackId && (c.status === "toMine" || c.status === "toBase")) {
+          if (c.currentTrackId && (c.status === "toMine" || c.status === "toBase") && !c.isPaused) {
             if (!trackCartMap[c.currentTrackId]) trackCartMap[c.currentTrackId] = []
             trackCartMap[c.currentTrackId].push(c.id)
           }
         }
+
+        const prevConflictMap: Record<string, ConflictInfo> = {}
+        for (const c of state.conflicts) {
+          const key = [c.cartId1, c.cartId2, c.trackId].sort().join("|")
+          prevConflictMap[key] = c
+        }
+
+        const newConflicts: ConflictInfo[] = []
         for (const [trackId, cartIds] of Object.entries(trackCartMap)) {
           if (cartIds.length > 1) {
             for (let i = 0; i < cartIds.length; i++) {
               for (let j = i + 1; j < cartIds.length; j++) {
-                newConflicts.push({ cartId1: cartIds[i], cartId2: cartIds[j], trackId })
+                const cartId1 = cartIds[i]
+                const cartId2 = cartIds[j]
+                const key = [cartId1, cartId2, trackId].sort().join("|")
+                const prev = prevConflictMap[key]
+                newConflicts.push({
+                  id: prev?.id || genId("conflict"),
+                  cartId1,
+                  cartId2,
+                  trackId,
+                  duration: prev ? prev.duration + effectiveDt : effectiveDt,
+                  firstSeenDay: prev?.firstSeenDay || state.day,
+                })
               }
             }
           }
@@ -560,6 +598,83 @@ export const useGameStore = create<GameState & GameActions>()(
         const s = get()
         const path = findPath(mineId, s.tracks, s.basePosition, s.mineNodes)
         return path !== null && path.length > 0
+      },
+
+      pauseCart: (cartId, duration) => {
+        const state = get()
+        const cart = state.carts.find(c => c.id === cartId)
+        if (!cart) return
+
+        set(s => ({
+          carts: s.carts.map(c =>
+            c.id === cartId
+              ? { ...c, isPaused: true, pauseRemaining: Math.max(c.pauseRemaining, duration) }
+              : c
+          ),
+        }))
+        get().showNotification(`${cart.name} 已暂停 ${duration.toFixed(1)} 秒`, "info")
+      },
+
+      resumeCart: (cartId) => {
+        const state = get()
+        const cart = state.carts.find(c => c.id === cartId)
+        if (!cart) return
+
+        set(s => ({
+          carts: s.carts.map(c =>
+            c.id === cartId
+              ? { ...c, isPaused: false, pauseRemaining: 0 }
+              : c
+          ),
+        }))
+        get().showNotification(`${cart.name} 已恢复运行`, "success")
+      },
+
+      pauseLowSpeedCartInConflict: (conflictId) => {
+        const state = get()
+        const conflict = state.conflicts.find(c => c.id === conflictId)
+        if (!conflict) return
+
+        const cart1 = state.carts.find(c => c.id === conflict.cartId1)
+        const cart2 = state.carts.find(c => c.id === conflict.cartId2)
+        if (!cart1 || !cart2) return
+
+        const lowSpeedCart = cart1.speed <= cart2.speed ? cart1 : cart2
+        const track = state.tracks.find(t => t.id === conflict.trackId)
+        const pauseDuration = track ? (track.length / lowSpeedCart.speed) * 1.5 : 5
+
+        set(s => ({
+          carts: s.carts.map(c =>
+            c.id === lowSpeedCart.id
+              ? { ...c, isPaused: true, pauseRemaining: Math.max(c.pauseRemaining, pauseDuration) }
+              : c
+          ),
+        }))
+        get().showNotification(`已暂停低速矿车 ${lowSpeedCart.name} ${pauseDuration.toFixed(1)} 秒`, "success")
+      },
+
+      staggerDeparture: (conflictId) => {
+        const state = get()
+        const conflict = state.conflicts.find(c => c.id === conflictId)
+        if (!conflict) return
+
+        const cart1 = state.carts.find(c => c.id === conflict.cartId1)
+        const cart2 = state.carts.find(c => c.id === conflict.cartId2)
+        if (!cart1 || !cart2) return
+
+        const slowCart = cart1.speed <= cart2.speed ? cart1 : cart2
+        const fastCart = cart1.speed > cart2.speed ? cart1 : cart2
+        const track = state.tracks.find(t => t.id === conflict.trackId)
+        const delayDuration = track ? (track.length / slowCart.speed) * 2 : 8
+
+        set(s => ({
+          carts: s.carts.map(c =>
+            c.id === slowCart.id
+              ? { ...c, departureDelay: Math.max(c.departureDelay, delayDuration) }
+              : c
+          ),
+        }))
+        get().showNotification(`${slowCart.name} 下次出发将延迟 ${delayDuration.toFixed(1)} 秒`, "success")
       },
 
       resetGame: () => {

@@ -1,6 +1,7 @@
 import { useGameStore } from "@/store/gameStore"
 import { MINERAL_NAMES, MINERAL_COLORS, MINERAL_PRICES, MineralType, CART_STATUS_LABELS } from "@/types/game"
 import { NEW_CART_COST } from "@/config/gameConfig"
+import ConflictPanel from "@/components/ConflictPanel"
 import {
   Mountain, Truck, Route, Battery, Package, AlertTriangle,
   Play, Square, ShoppingCart, Info
@@ -262,17 +263,7 @@ export default function SidePanel() {
         </div>
       </div>
 
-      {conflicts.length > 0 && (
-        <div className="p-3 bg-[#ff444411] border-t border-[#ff444433]">
-          <div className="flex items-center gap-1.5 mb-1">
-            <AlertTriangle size={12} className="text-[#ff4444]" />
-            <span className="text-[#ff4444] text-xs font-bold">路线冲突</span>
-          </div>
-          <p className="text-[10px] text-[#ff8888]">
-            {conflicts.length} 处冲突，矿车通行效率降低，请调整路线
-          </p>
-        </div>
-      )}
+      <ConflictPanel />
     </div>
   )
 }

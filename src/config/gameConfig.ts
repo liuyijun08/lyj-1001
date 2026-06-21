@@ -44,6 +44,7 @@ export const INITIAL_CARTS: Cart[] = [
     status: "idle", routeId: null, assignedMineId: null, currentTrackId: null,
     trackProgress: 0, direction: "forward", miningProgress: 0,
     x: BASE_POSITION.x, y: BASE_POSITION.y,
+    isPaused: false, pauseRemaining: 0, departureDelay: 0,
   },
   {
     id: "cart-2", name: "拓荒者-2", maxLoad: 15, currentLoad: 0, currentMineral: null,
@@ -51,6 +52,7 @@ export const INITIAL_CARTS: Cart[] = [
     status: "idle", routeId: null, assignedMineId: null, currentTrackId: null,
     trackProgress: 0, direction: "forward", miningProgress: 0,
     x: BASE_POSITION.x, y: BASE_POSITION.y,
+    isPaused: false, pauseRemaining: 0, departureDelay: 0,
   },
   {
     id: "cart-3", name: "运载者-3", maxLoad: 30, currentLoad: 0, currentMineral: null,
@@ -58,6 +60,7 @@ export const INITIAL_CARTS: Cart[] = [
     status: "idle", routeId: null, assignedMineId: null, currentTrackId: null,
     trackProgress: 0, direction: "forward", miningProgress: 0,
     x: BASE_POSITION.x, y: BASE_POSITION.y,
+    isPaused: false, pauseRemaining: 0, departureDelay: 0,
   },
 ]
 
