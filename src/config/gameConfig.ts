@@ -1,4 +1,4 @@
-import type { MineNode, Cart, Resources, RepairVehicle } from "@/types/game"
+import type { MineNode, Cart, Resources, RepairVehicle, PowerStation } from "@/types/game"
 
 export const MAP_WIDTH = 900
 export const MAP_HEIGHT = 600
@@ -15,6 +15,14 @@ export const TRACK_MAINTENANCE_PER_UNIT = 0.5
 export const CART_MAINTENANCE = 10
 export const BASE_CHARGE_RATE = 30
 export const MINING_SPEED = 5
+
+export const POWER_STATION_COST = 250
+export const POWER_STATION_OUTPUT = 100
+export const POWER_CABLE_COST_PER_UNIT = 1.5
+export const POWER_CABLE_MAINTENANCE_PER_UNIT = 0.3
+export const POWER_STATION_RADIUS = 40
+export const POWER_STATION_SIZE = 22
+export const UNPOWERED_SPEED_RATIO = 0.4
 
 export const INITIAL_RESOURCES: Resources = {
   credits: 500,
@@ -40,29 +48,43 @@ export const INITIAL_MINES: MineNode[] = [
 export const INITIAL_CARTS: Cart[] = [
   {
     id: "cart-1", name: "探路者-1", maxLoad: 20, currentLoad: 0, currentMineral: null,
-    maxBattery: 100, currentBattery: 100, batteryPerUnit: 0.15, speed: 80,
+    maxBattery: 100, currentBattery: 100, batteryPerUnit: 0.15, baseSpeed: 80, speed: 80,
     status: "idle", routeId: null, assignedMineId: null, currentTrackId: null,
     trackProgress: 0, direction: "forward", miningProgress: 0,
     x: BASE_POSITION.x, y: BASE_POSITION.y,
-    isPaused: false, pauseRemaining: 0, departureDelay: 0,
+    isPaused: false, pauseRemaining: 0, departureDelay: 0, isPowered: false,
   },
   {
     id: "cart-2", name: "拓荒者-2", maxLoad: 15, currentLoad: 0, currentMineral: null,
-    maxBattery: 80, currentBattery: 80, batteryPerUnit: 0.2, speed: 100,
+    maxBattery: 80, currentBattery: 80, batteryPerUnit: 0.2, baseSpeed: 100, speed: 100,
     status: "idle", routeId: null, assignedMineId: null, currentTrackId: null,
     trackProgress: 0, direction: "forward", miningProgress: 0,
     x: BASE_POSITION.x, y: BASE_POSITION.y,
-    isPaused: false, pauseRemaining: 0, departureDelay: 0,
+    isPaused: false, pauseRemaining: 0, departureDelay: 0, isPowered: false,
   },
   {
     id: "cart-3", name: "运载者-3", maxLoad: 30, currentLoad: 0, currentMineral: null,
-    maxBattery: 120, currentBattery: 120, batteryPerUnit: 0.12, speed: 60,
+    maxBattery: 120, currentBattery: 120, batteryPerUnit: 0.12, baseSpeed: 60, speed: 60,
     status: "idle", routeId: null, assignedMineId: null, currentTrackId: null,
     trackProgress: 0, direction: "forward", miningProgress: 0,
     x: BASE_POSITION.x, y: BASE_POSITION.y,
-    isPaused: false, pauseRemaining: 0, departureDelay: 0,
+    isPaused: false, pauseRemaining: 0, departureDelay: 0, isPowered: false,
   },
 ]
+
+export function createInitialPowerStations(): PowerStation[] {
+  return [
+    {
+      id: "station-1",
+      name: "主发电站",
+      x: BASE_POSITION.x - 60,
+      y: BASE_POSITION.y,
+      powerOutput: POWER_STATION_OUTPUT,
+      buildCost: POWER_STATION_COST,
+      operational: true,
+    },
+  ]
+}
 
 export const NEW_CART_COST = 200
 export const SUPPLY_PLAN_COST = 150

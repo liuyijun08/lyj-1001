@@ -10,6 +10,10 @@ export type TrackStatus = "normal" | "broken" | "repairing"
 
 export type RepairVehicleStatus = "idle" | "traveling" | "repairing" | "returning"
 
+export type CableStatus = "normal" | "broken" | "repairing"
+
+export type PowerNodeType = "base" | "mine" | "station"
+
 export interface SupplyRecord {
   id: string
   mineId: string
@@ -94,6 +98,31 @@ export interface RepairVehicle {
   travelDistance: number
 }
 
+export interface PowerStation {
+  id: string
+  name: string
+  x: number
+  y: number
+  powerOutput: number
+  buildCost: number
+  operational: boolean
+}
+
+export interface PowerCable {
+  id: string
+  fromId: string
+  toId: string
+  length: number
+  buildCost: number
+  status: CableStatus
+}
+
+export interface PoweredNode {
+  nodeId: string
+  nodeType: PowerNodeType
+  level: number
+}
+
 export interface CartRoute {
   id: string
   cartId: string
@@ -110,6 +139,7 @@ export interface Cart {
   maxBattery: number
   currentBattery: number
   batteryPerUnit: number
+  baseSpeed: number
   speed: number
   status: CartStatus
   routeId: string | null
@@ -123,6 +153,7 @@ export interface Cart {
   isPaused: boolean
   pauseRemaining: number
   departureDelay: number
+  isPowered: boolean
 }
 
 export interface Resources {
@@ -187,6 +218,13 @@ export interface GameState {
   repairVehicles: RepairVehicle[]
   selectedRepairVehicleId: string | null
   meteorCooldown: number
+  powerStations: PowerStation[]
+  powerCables: PowerCable[]
+  poweredNodes: PoweredNode[]
+  powerBuildMode: "station" | "cable" | null
+  powerStartNodeId: string | null
+  selectedPowerStationId: string | null
+  powerStationPlacementPos: { x: number; y: number } | null
 }
 
 export const MINERAL_COLORS: Record<MineralType, string> = {
@@ -230,6 +268,12 @@ export const REPAIR_VEHICLE_STATUS_LABELS: Record<RepairVehicleStatus, string> =
   traveling: "前往现场",
   repairing: "维修中",
   returning: "返回基地",
+}
+
+export const CABLE_STATUS_LABELS: Record<CableStatus, string> = {
+  normal: "正常",
+  broken: "断线",
+  repairing: "维修中",
 }
 
 export type TargetType = "tracks" | "credits" | "minerals" | "minesConnected" | "days"

@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail, LevelState, LevelResult, LevelProgress, AppView, RepairVehicle, AccidentRecord } from "@/types/game"
+import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail, LevelState, LevelResult, LevelProgress, AppView, RepairVehicle, AccidentRecord, PowerStation, PowerCable, PoweredNode, PowerNodeType } from "@/types/game"
 import { MINERAL_PRICES } from "@/types/game"
 import {
   INITIAL_RESOURCES, INITIAL_MINES, INITIAL_CARTS, BASE_POSITION,
@@ -9,6 +9,8 @@ import {
   CART_MAINTENANCE, BASE_CHARGE_RATE, MAP_WIDTH, MAP_HEIGHT, NEW_CART_COST,
   SUPPLY_PLAN_COST, METEOR_PROBABILITY_PER_DAY, METEOR_COOLDOWN_DAYS,
   REPAIR_DURATION_PER_LENGTH, NEW_REPAIR_VEHICLE_COST, createInitialRepairVehicles,
+  POWER_STATION_COST, POWER_STATION_OUTPUT, POWER_CABLE_COST_PER_UNIT, POWER_CABLE_MAINTENANCE_PER_UNIT,
+  UNPOWERED_SPEED_RATIO, createInitialPowerStations,
 } from "@/config/gameConfig"
 import { LEVELS, getLevelById } from "@/config/levels"
 
@@ -46,6 +48,84 @@ function findPath(mineId: string, tracks: Track[], basePosition: { x: number; y:
   }
 
   return null
+}
+
+function calcPoweredNodes(
+  powerStations: PowerStation[],
+  powerCables: PowerCable[],
+  basePosition: { x: number; y: number },
+  mines: MineNode[]
+): PoweredNode[] {
+  const adj: Record<string, { cable: PowerCable; neighbor: string }[]> = {}
+
+  for (const cable of powerCables) {
+    if (cable.status === "broken") continue
+    if (!adj[cable.fromId]) adj[cable.fromId] = []
+    if (!adj[cable.toId]) adj[cable.toId] = []
+    adj[cable.fromId].push({ cable, neighbor: cable.toId })
+    adj[cable.toId].push({ cable, neighbor: cable.fromId })
+  }
+
+  const stationIds = powerStations.filter(s => s.operational).map(s => s.id)
+  const result: PoweredNode[] = []
+  const visited: Record<string, number> = {}
+  const queue: { nodeId: string; level: number }[] = []
+
+  for (const sid of stationIds) {
+    queue.push({ nodeId: sid, level: 0 })
+    visited[sid] = 0
+  }
+
+  while (queue.length > 0) {
+    const { nodeId, level } = queue.shift()!
+
+    let nodeType: PowerNodeType = "mine"
+    if (nodeId === "base") nodeType = "base"
+    else if (powerStations.some(s => s.id === nodeId)) nodeType = "station"
+
+    result.push({ nodeId, nodeType, level })
+
+    const neighbors = adj[nodeId] || []
+    for (const { neighbor } of neighbors) {
+      if (!(neighbor in visited) || visited[neighbor] > level + 1) {
+        visited[neighbor] = level + 1
+        queue.push({ nodeId: neighbor, level: level + 1 })
+      }
+    }
+  }
+
+  return result
+}
+
+function isNodePowered(poweredNodes: PoweredNode[], nodeId: string): boolean {
+  return poweredNodes.some(p => p.nodeId === nodeId)
+}
+
+function isCartPowered(
+  cart: Cart,
+  poweredNodes: PoweredNode[],
+  tracks: Track[],
+  basePosition: { x: number; y: number },
+  mines: MineNode[]
+): boolean {
+  const poweredIds = new Set(poweredNodes.map(p => p.nodeId))
+
+  if (cart.status === "idle" || cart.status === "charging") {
+    return poweredIds.has("base")
+  }
+
+  if (cart.status === "mining" && cart.assignedMineId) {
+    return poweredIds.has(cart.assignedMineId)
+  }
+
+  if ((cart.status === "toMine" || cart.status === "toBase") && cart.currentTrackId) {
+    const track = tracks.find(t => t.id === cart.currentTrackId)
+    if (track) {
+      return poweredIds.has(track.fromId) || poweredIds.has(track.toId)
+    }
+  }
+
+  return false
 }
 
 let idCounter = Date.now()
@@ -90,6 +170,15 @@ interface GameActions {
   buyRepairVehicle: () => void
   selectRepairVehicle: (vehicleId: string | null) => void
   triggerMeteorShower: () => void
+  togglePowerBuildMode: (mode: "station" | "cable" | null) => void
+  setPowerStartNode: (nodeId: string | null) => void
+  buildPowerCable: (fromId: string, toId: string) => void
+  buildPowerStation: (x: number, y: number) => void
+  selectPowerStation: (stationId: string | null) => void
+  setPlacementPreview: (pos: { x: number; y: number } | null) => void
+  isMinePowered: (mineId: string) => boolean
+  isNodePowered: (nodeId: string) => boolean
+  validatePowerGrid: () => { poweredMines: number; totalLoad: number; totalOutput: number }
 }
 
 function initLevelResults(): Record<number, LevelResult> {
@@ -144,6 +233,13 @@ const initialState = {
   repairVehicles: createInitialRepairVehicles(),
   selectedRepairVehicleId: null as string | null,
   meteorCooldown: 0,
+  powerStations: createInitialPowerStations(),
+  powerCables: [] as PowerCable[],
+  poweredNodes: [] as PoweredNode[],
+  powerBuildMode: null as "station" | "cable" | null,
+  powerStartNodeId: null as string | null,
+  selectedPowerStationId: null as string | null,
+  powerStationPlacementPos: null as { x: number; y: number } | null,
 }
 
 export const useGameStore = create<GameState & GameActions>()(
@@ -294,6 +390,7 @@ export const useGameStore = create<GameState & GameActions>()(
           maxBattery: 100,
           currentBattery: 100,
           batteryPerUnit: 0.15,
+          baseSpeed: 80,
           speed: 80,
           status: "idle",
           routeId: null,
@@ -307,6 +404,7 @@ export const useGameStore = create<GameState & GameActions>()(
           isPaused: false,
           pauseRemaining: 0,
           departureDelay: 0,
+          isPowered: false,
         }
 
         set(s => ({
@@ -322,6 +420,13 @@ export const useGameStore = create<GameState & GameActions>()(
         const speed = state.gameSpeed
         const effectiveDt = dt * speed
 
+        const poweredNodes = calcPoweredNodes(
+          state.powerStations,
+          state.powerCables,
+          state.basePosition,
+          state.mineNodes
+        )
+
         const newDayProgress = state.dayProgress + effectiveDt
         let newDay = state.day
         let newResources = { ...state.resources }
@@ -334,6 +439,13 @@ export const useGameStore = create<GameState & GameActions>()(
         let newIsPaused = showSettlement && !state.showSettlement
         const dailyCollectedAcc: Record<MineralType, number> = { ...state.dailyCollected }
         let newMeteorCooldown = Math.max(0, state.meteorCooldown - effectiveDt / DAY_DURATION)
+
+        for (let i = 0; i < newCarts.length; i++) {
+          const cart = newCarts[i]
+          const powered = isCartPowered(cart, poweredNodes, newTracks, state.basePosition, newMines)
+          cart.isPowered = powered
+          cart.speed = powered ? cart.baseSpeed : Math.round(cart.baseSpeed * UNPOWERED_SPEED_RATIO)
+        }
 
         if (newDayProgress >= DAY_DURATION) {
           showSettlement = true
@@ -762,6 +874,7 @@ export const useGameStore = create<GameState & GameActions>()(
           accidents: newAccidents,
           repairVehicles: newRepairVehicles,
           meteorCooldown: newMeteorCooldown,
+          poweredNodes,
         })
       },
 
@@ -775,7 +888,8 @@ export const useGameStore = create<GameState & GameActions>()(
         }
         const trackMaintenance = state.tracks.reduce((sum, t) => sum + t.length * TRACK_MAINTENANCE_PER_UNIT, 0)
         const cartMaintenance = state.carts.length * CART_MAINTENANCE
-        const expense = Math.round(trackMaintenance + cartMaintenance)
+        const cableMaintenance = state.powerCables.reduce((sum, c) => sum + c.length * POWER_CABLE_MAINTENANCE_PER_UNIT, 0)
+        const expense = Math.round(trackMaintenance + cartMaintenance + cableMaintenance)
 
         const newResources = { ...state.resources }
         newResources.credits = newResources.credits + income - expense
@@ -859,6 +973,8 @@ export const useGameStore = create<GameState & GameActions>()(
             isPaused: false,
             pauseRemaining: 0,
             departureDelay: 0,
+            isPowered: false,
+            speed: c.baseSpeed,
           }
         })
 
@@ -1207,6 +1323,13 @@ export const useGameStore = create<GameState & GameActions>()(
           repairVehicles: createInitialRepairVehicles(),
           selectedRepairVehicleId: null,
           meteorCooldown: 0,
+          powerStations: createInitialPowerStations(),
+          powerCables: [],
+          poweredNodes: [],
+          powerBuildMode: null,
+          powerStartNodeId: null,
+          selectedPowerStationId: null,
+          powerStationPlacementPos: null,
         })
         get().showNotification(`关卡 ${level.name} 开始！`, "success")
       },
@@ -1449,6 +1572,136 @@ export const useGameStore = create<GameState & GameActions>()(
         }))
         get().showNotification(`⚠️ 陨石雨警报！一段轨道损毁，请派遣维修车`, "error")
       },
+
+      togglePowerBuildMode: (mode) => {
+        if (mode === null) {
+          set({ powerBuildMode: null, powerStartNodeId: null, powerStationPlacementPos: null })
+        } else {
+          set({
+            powerBuildMode: mode,
+            powerStartNodeId: null,
+            powerStationPlacementPos: null,
+            trackBuildMode: false,
+            trackStartId: null,
+          })
+        }
+      },
+
+      setPowerStartNode: (nodeId) => set({ powerStartNodeId: nodeId }),
+
+      setPlacementPreview: (pos) => set({ powerStationPlacementPos: pos }),
+
+      selectPowerStation: (stationId) => set({ selectedPowerStationId: stationId }),
+
+      buildPowerStation: (x, y) => {
+        const state = get()
+        if (state.resources.credits < POWER_STATION_COST) {
+          get().showNotification("金币不足，无法建造发电站", "error")
+          return
+        }
+
+        const newStation: PowerStation = {
+          id: genId("station"),
+          name: `发电站-${state.powerStations.length + 1}`,
+          x,
+          y,
+          powerOutput: POWER_STATION_OUTPUT,
+          buildCost: POWER_STATION_COST,
+          operational: true,
+        }
+
+        const newPoweredNodes = calcPoweredNodes(
+          [...state.powerStations, newStation],
+          state.powerCables,
+          state.basePosition,
+          state.mineNodes
+        )
+
+        set(s => ({
+          powerStations: [...s.powerStations, newStation],
+          resources: { ...s.resources, credits: s.resources.credits - POWER_STATION_COST },
+          powerBuildMode: null,
+          powerStationPlacementPos: null,
+          poweredNodes: newPoweredNodes,
+        }))
+        get().showNotification(`${newStation.name} 建造完成！`, "success")
+      },
+
+      buildPowerCable: (fromId, toId) => {
+        const state = get()
+        if (fromId === toId) return
+
+        const exists = state.powerCables.some(c =>
+          (c.fromId === fromId && c.toId === toId) ||
+          (c.fromId === toId && c.toId === fromId)
+        )
+        if (exists) return
+
+        const allPowerNodes = [
+          { id: "base", x: state.basePosition.x, y: state.basePosition.y },
+          ...state.mineNodes.map(m => ({ id: m.id, x: m.x, y: m.y })),
+          ...state.powerStations.map(s => ({ id: s.id, x: s.x, y: s.y })),
+        ]
+        const from = allPowerNodes.find(n => n.id === fromId)
+        const to = allPowerNodes.find(n => n.id === toId)
+        if (!from || !to) return
+
+        const length = calcDistance(from.x, from.y, to.x, to.y)
+        const buildCost = Math.round(length * POWER_CABLE_COST_PER_UNIT)
+
+        if (state.resources.credits < buildCost) {
+          get().showNotification("金币不足，无法铺设电缆", "error")
+          return
+        }
+
+        const newCable: PowerCable = {
+          id: genId("cable"),
+          fromId,
+          toId,
+          length: Math.round(length),
+          buildCost,
+          status: "normal",
+        }
+
+        const newPoweredNodes = calcPoweredNodes(
+          state.powerStations,
+          [...state.powerCables, newCable],
+          state.basePosition,
+          state.mineNodes
+        )
+
+        set(s => ({
+          powerCables: [...s.powerCables, newCable],
+          resources: { ...s.resources, credits: s.resources.credits - buildCost },
+          powerStartNodeId: null,
+          poweredNodes: newPoweredNodes,
+        }))
+        get().showNotification(`电缆铺设完成（${Math.round(length)}m, ${buildCost} 金币）`, "success")
+      },
+
+      isMinePowered: (mineId) => {
+        const state = get()
+        return isNodePowered(state.poweredNodes, mineId)
+      },
+
+      isNodePowered: (nodeId) => {
+        const state = get()
+        return isNodePowered(state.poweredNodes, nodeId)
+      },
+
+      validatePowerGrid: () => {
+        const state = get()
+        const poweredMines = state.poweredNodes.filter(p => p.nodeType === "mine").length
+        const totalOutput = state.powerStations
+          .filter(s => s.operational)
+          .reduce((sum, s) => sum + s.powerOutput, 0)
+        const mineCount = state.mineNodes.length
+        const baseCount = isNodePowered(state.poweredNodes, "base") ? 1 : 0
+        const stationCount = state.poweredNodes.filter(p => p.nodeType === "station").length
+        const totalLoad = (mineCount + baseCount + stationCount) * 10
+
+        return { poweredMines, totalLoad, totalOutput }
+      },
     }),
     {
       name: "lunar-miner-game",
@@ -1472,6 +1725,9 @@ export const useGameStore = create<GameState & GameActions>()(
         accidents: state.accidents,
         repairVehicles: state.repairVehicles,
         meteorCooldown: state.meteorCooldown,
+        powerStations: state.powerStations,
+        powerCables: state.powerCables,
+        poweredNodes: state.poweredNodes,
       }),
     }
   )
