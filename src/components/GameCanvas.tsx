@@ -32,11 +32,16 @@ export default function GameCanvas() {
   const [dragHoverMineId, setDragHoverMineId] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [dragInvalidMineId, setDragInvalidMineId] = useState<string | null>(null)
+  const [draggingCartId, setDraggingCartId] = useState<string | null>(null)
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+  const dragStartPos = useRef<{ x: number; y: number } | null>(null)
+  const isCanvasDrag = useRef(false)
 
   const store = useGameStore()
   const trackBuildMode = useGameStore(s => s.trackBuildMode)
   const notification = useGameStore(s => s.notification)
   const hideNotification = useGameStore(s => s.hideNotification)
+  const carts = useGameStore(s => s.carts)
 
   const render = useCallback(() => {
     const canvas = canvasRef.current
@@ -246,9 +251,11 @@ export default function GameCanvas() {
         cart.y = by + offsetY
       }
 
+      const isBeingDragged = draggingCartId === cart.id
       const color = cart.currentMineral ? MINERAL_COLORS[cart.currentMineral] : "#d4cfc4"
       const halfSize = CART_SIZE / 2
 
+      ctx.globalAlpha = isBeingDragged ? 0.3 : 1
       ctx.fillStyle = color
       ctx.shadowColor = color
       ctx.shadowBlur = 6
@@ -272,6 +279,7 @@ export default function GameCanvas() {
       ctx.fillRect(cart.x - halfSize, cart.y - halfSize - 5, CART_SIZE, 3)
       ctx.fillStyle = batteryRatio > 0.3 ? "#00ff88" : "#ff4444"
       ctx.fillRect(cart.x - halfSize, cart.y - halfSize - 5, CART_SIZE * batteryRatio, 3)
+      ctx.globalAlpha = 1
 
       if (state.selectedCartId === cart.id) {
         ctx.strokeStyle = "#00d4ff"
@@ -279,6 +287,34 @@ export default function GameCanvas() {
         ctx.setLineDash([3, 3])
         ctx.strokeRect(cart.x - halfSize - 4, cart.y - halfSize - 8, CART_SIZE + 8, CART_SIZE + 14)
         ctx.setLineDash([])
+      }
+    }
+
+    // 拖拽中绘制虚拟矿车和连线
+    if (draggingCartId && mousePos) {
+      const dragCart = state.carts.find(c => c.id === draggingCartId)
+      if (dragCart) {
+        // 从原位置到鼠标位置的虚线
+        ctx.setLineDash([6, 6])
+        ctx.strokeStyle = "rgba(0, 212, 255, 0.5)"
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(dragCart.x, dragCart.y)
+        ctx.lineTo(mousePos.x, mousePos.y)
+        ctx.stroke()
+        ctx.setLineDash([])
+
+        // 跟随鼠标的虚拟矿车
+        const vHalf = CART_SIZE / 2
+        const vColor = dragCart.currentMineral ? MINERAL_COLORS[dragCart.currentMineral] : "#d4cfc4"
+        ctx.fillStyle = vColor
+        ctx.shadowColor = vColor
+        ctx.shadowBlur = 12
+        ctx.fillRect(mousePos.x - vHalf, mousePos.y - vHalf, CART_SIZE, CART_SIZE)
+        ctx.shadowBlur = 0
+        ctx.strokeStyle = "#00d4ff"
+        ctx.lineWidth = 2
+        ctx.strokeRect(mousePos.x - vHalf, mousePos.y - vHalf, CART_SIZE, CART_SIZE)
       }
     }
 
@@ -310,7 +346,7 @@ export default function GameCanvas() {
         20
       )
     }
-  }, [dragHoverMineId, dragInvalidMineId, isDragging])
+  }, [dragHoverMineId, dragInvalidMineId, isDragging, draggingCartId, mousePos])
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLCanvasElement>) => {
     e.preventDefault()
@@ -397,7 +433,110 @@ export default function GameCanvas() {
     return () => cancelAnimationFrame(animRef.current)
   }, [render])
 
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (trackBuildMode) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = MAP_WIDTH / rect.width
+    const scaleY = MAP_HEIGHT / rect.height
+    const mx = (e.clientX - rect.left) * scaleX
+    const my = (e.clientY - rect.top) * scaleY
+
+    const state = useGameStore.getState()
+    dragStartPos.current = { x: mx, y: my }
+    isCanvasDrag.current = false
+
+    // 检查是否点中了待命的矿车
+    for (const cart of state.carts) {
+      if (cart.status !== "idle" && cart.status !== "charging") continue
+      const dist = Math.sqrt((mx - cart.x) ** 2 + (my - cart.y) ** 2)
+      if (dist <= CART_SIZE + 5) {
+        setDraggingCartId(cart.id)
+        setMousePos({ x: mx, y: my })
+        setIsDragging(true)
+        state.selectCart(cart.id)
+        return
+      }
+    }
+    setDraggingCartId(null)
+  }, [trackBuildMode])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = MAP_WIDTH / rect.width
+    const scaleY = MAP_HEIGHT / rect.height
+    const mx = (e.clientX - rect.left) * scaleX
+    const my = (e.clientY - rect.top) * scaleY
+
+    // 检查是否超过拖拽阈值
+    if (dragStartPos.current && !isCanvasDrag.current) {
+      const dist = Math.sqrt((mx - dragStartPos.current.x) ** 2 + (my - dragStartPos.current.y) ** 2)
+      if (dist > 5) isCanvasDrag.current = true
+    }
+
+    if (draggingCartId) {
+      setMousePos({ x: mx, y: my })
+      const state = useGameStore.getState()
+      let hoverId: string | null = null
+      let invalidId: string | null = null
+      for (const mine of state.mineNodes) {
+        const dist = Math.sqrt((mx - mine.x) ** 2 + (my - mine.y) ** 2)
+        if (dist <= NODE_RADIUS + 10) {
+          const reachable = state.isMineReachable(mine.id)
+          if (reachable) hoverId = mine.id
+          else invalidId = mine.id
+          break
+        }
+      }
+      setDragHoverMineId(hoverId)
+      setDragInvalidMineId(invalidId)
+    }
+  }, [draggingCartId])
+
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!draggingCartId) {
+      dragStartPos.current = null
+      return
+    }
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = MAP_WIDTH / rect.width
+    const scaleY = MAP_HEIGHT / rect.height
+    const mx = (e.clientX - rect.left) * scaleX
+    const my = (e.clientY - rect.top) * scaleY
+
+    const state = useGameStore.getState()
+    let dropped = false
+    for (const mine of state.mineNodes) {
+      const dist = Math.sqrt((mx - mine.x) ** 2 + (my - mine.y) ** 2)
+      if (dist <= NODE_RADIUS + 10) {
+        state.assignCartToMine(draggingCartId, mine.id)
+        dropped = true
+        break
+      }
+    }
+    if (!dropped && isCanvasDrag.current) {
+      state.showNotification("请将矿车拖到矿点上", "info")
+    }
+
+    setDraggingCartId(null)
+    setMousePos(null)
+    setIsDragging(false)
+    setDragHoverMineId(null)
+    setDragInvalidMineId(null)
+    dragStartPos.current = null
+  }, [draggingCartId])
+
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // 如果是拖拽操作，跳过click
+    if (isCanvasDrag.current || draggingCartId) {
+      isCanvasDrag.current = false
+      return
+    }
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -445,7 +584,7 @@ export default function GameCanvas() {
       state.selectNode(null)
       state.selectCart(null)
     }
-  }, [])
+  }, [draggingCartId])
 
   return (
     <div className="relative w-full h-full">
@@ -454,10 +593,14 @@ export default function GameCanvas() {
         width={MAP_WIDTH}
         height={MAP_HEIGHT}
         onClick={handleCanvasClick}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`w-full h-full ${trackBuildMode ? "cursor-crosshair" : isDragging ? "cursor-copy" : "cursor-crosshair"}`}
+        className={`w-full h-full ${trackBuildMode ? "cursor-crosshair" : draggingCartId ? "cursor-grabbing" : isDragging ? "cursor-copy" : "cursor-crosshair"} select-none`}
         style={{ imageRendering: "auto" }}
       />
 
