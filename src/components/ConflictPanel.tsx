@@ -93,6 +93,12 @@ export default function ConflictPanel() {
     return result.sort((a, b) => b.totalDuration - a.totalDuration)
   }, [conflicts, carts, tracks])
 
+  const getBatteryColor = (ratio: number) => {
+    if (ratio <= 0.15) return "#ff4444"
+    if (ratio <= 0.3) return "#ff8c00"
+    return "#00ff88"
+  }
+
   const formatDuration = (seconds: number) => {
     if (seconds < 60) return `${seconds.toFixed(1)}s`
     const mins = Math.floor(seconds / 60)
@@ -100,24 +106,74 @@ export default function ConflictPanel() {
     return `${mins}m${secs}s`
   }
 
-  const getCartStatusBadge = (cartId: string) => {
+  const getCartStatusBadge = (cartId: string, isLowBattery: boolean) => {
     const cart = carts.find(c => c.id === cartId)
     if (!cart) return null
+    const badges: JSX.Element[] = []
+
+    if (isLowBattery) {
+      badges.push(
+        <span key="low" className="text-[10px] px-1.5 py-0.5 rounded bg-[#ff444433] text-[#ff4444] border border-[#ff444455]">
+          低电
+        </span>
+      )
+    }
     if (cart.isPaused) {
-      return (
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#ffd70022] text-[#ffd700] border border-[#ffd70033]">
+      badges.push(
+        <span key="pause" className="text-[10px] px-1.5 py-0.5 rounded bg-[#ffd70022] text-[#ffd700] border border-[#ffd70033]">
           暂停中
         </span>
       )
     }
     if (cart.departureDelay > 0) {
-      return (
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#00d4ff22] text-[#00d4ff] border border-[#00d4ff33]">
+      badges.push(
+        <span key="delay" className="text-[10px] px-1.5 py-0.5 rounded bg-[#00d4ff22] text-[#00d4ff] border border-[#00d4ff33]">
           延迟 {formatDuration(cart.departureDelay)}
         </span>
       )
     }
-    return null
+    return <>{badges}</>
+  }
+
+  const renderCartInfo = (
+    name: string,
+    speed: number,
+    battery: number,
+    maxBattery: number,
+    cartId: string,
+    isLowBattery: boolean,
+    align: "left" | "right"
+  ) => {
+    const batteryRatio = battery / maxBattery
+    const batteryColor = getBatteryColor(batteryRatio)
+
+    return (
+      <div className={`flex items-center gap-1.5 flex-1 ${align === "right" ? "justify-end" : ""}`}>
+        {align === "left" && getCartStatusBadge(cartId, isLowBattery)}
+        <div className={`flex flex-col ${align === "right" ? "items-end" : ""}`}>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-[#d4cfc4] font-medium">
+              {name}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className="text-[#6a7a9a]">
+              速度 <span style={{ color: "#00d4ff", fontFamily: "Orbitron, monospace" }}>{speed}</span>
+            </span>
+            <span className="text-[#6a7a9a]">
+              电量 <span style={{ color: batteryColor, fontFamily: "Orbitron, monospace" }}>{Math.round(batteryRatio * 100)}%</span>
+            </span>
+            <div className="w-10 h-1 bg-[#1a2540] rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full"
+                style={{ width: `${batteryRatio * 100}%`, backgroundColor: batteryColor }}
+              />
+            </div>
+          </div>
+        </div>
+        {align === "right" && getCartStatusBadge(cartId, isLowBattery)}
+      </div>
+    )
   }
 
   if (conflicts.length === 0) return null
@@ -165,80 +221,89 @@ export default function ConflictPanel() {
               </div>
 
               <div className="p-2 space-y-2.5">
-                {group.conflicts.map(conflict => (
-                  <div key={conflict.id} className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1 flex-1">
-                        <span className="text-[11px] text-[#d4cfc4] font-medium">
-                          {conflict.cart1Name}
-                        </span>
-                        <span className="text-[10px] text-[#6a7a9a]">
-                          ({conflict.cart1Speed})
-                        </span>
-                        {getCartStatusBadge(conflict.cart1Id)}
-                      </div>
-                      <span className="text-[10px] text-[#ff6666] mx-1">⇄</span>
-                      <div className="flex items-center gap-1 flex-1 justify-end">
-                        {getCartStatusBadge(conflict.cart2Id)}
-                        <span className="text-[11px] text-[#d4cfc4] font-medium">
-                          {conflict.cart2Name}
-                        </span>
-                        <span className="text-[10px] text-[#6a7a9a]">
-                          ({conflict.cart2Speed})
-                        </span>
-                      </div>
-                    </div>
+                {group.conflicts.map(conflict => {
+                  const lowBatteryCart = carts.find(c => c.id === conflict.lowBatteryCartId)
+                  const isPaused = lowBatteryCart?.isPaused
+                  const pauseTip = isPaused
+                    ? `恢复 ${lowBatteryCart?.name} 的运行`
+                    : `暂停电量较低的 ${lowBatteryCart?.name}，时长约 ${(group.trackLength / (lowBatteryCart?.speed || 80) * 1.5).toFixed(1)} 秒，让高电车优先通过`
+                  const staggerTip = `为电量较低的 ${lowBatteryCart?.name} 设置出发延迟，时长约 ${(group.trackLength / (lowBatteryCart?.speed || 80) * 2).toFixed(1)} 秒，避免再次冲突`
 
-                    <div className="flex items-center gap-1 text-[10px]">
-                      <Clock size={9} className="text-[#ff8888]" />
-                      <span className="text-[#ff8888]">
-                        冲突时长 {formatDuration(conflict.duration)}
-                      </span>
-                      {conflict.firstSeenDay && (
-                        <>
-                          <span className="mx-1 text-[#4a5a7a]">·</span>
-                          <span className="text-[#6a7a9a]">
-                            第 {conflict.firstSeenDay} 天出现
-                          </span>
-                        </>
-                      )}
-                    </div>
+                  return (
+                    <div key={conflict.id} className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        {renderCartInfo(
+                          conflict.cart1Name,
+                          conflict.cart1Speed,
+                          conflict.cart1Battery,
+                          conflict.cart1MaxBattery,
+                          conflict.cart1Id,
+                          conflict.cart1Id === conflict.lowBatteryCartId,
+                          "left"
+                        )}
+                        <span className="text-[10px] text-[#ff6666] mx-1">⇄</span>
+                        {renderCartInfo(
+                          conflict.cart2Name,
+                          conflict.cart2Speed,
+                          conflict.cart2Battery,
+                          conflict.cart2MaxBattery,
+                          conflict.cart2Id,
+                          conflict.cart2Id === conflict.lowBatteryCartId,
+                          "right"
+                        )}
+                      </div>
 
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const cart = carts.find(c => c.id === conflict.lowBatteryCartId)
-                          if (cart?.isPaused) {
-                            resumeCart(conflict.lowBatteryCartId)
-                          } else {
-                            pauseLowSpeedCartInConflict(conflict.id)
-                          }
-                        }}
-                        className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold transition-colors ${
-                          carts.find(c => c.id === conflict.lowBatteryCartId)?.isPaused
-                            ? "bg-[#ffd70022] border border-[#ffd70044] text-[#ffd700] hover:bg-[#ffd70033]"
-                            : "bg-[#ff888811] border border-[#ff666633] text-[#ff6666] hover:bg-[#ff666622]"
-                        }`}
-                      >
-                        <Pause size={10} />
-                        {carts.find(c => c.id === conflict.lowBatteryCartId)?.isPaused
-                          ? "恢复低电车"
-                          : "暂停低电车"}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          staggerDeparture(conflict.id)
-                        }}
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold bg-[#00d4ff11] border border-[#00d4ff33] text-[#00d4ff] hover:bg-[#00d4ff22] transition-colors"
-                      >
-                        <Zap size={10} />
-                        错峰出发
-                      </button>
+                      <div className="flex items-center gap-1 text-[10px]">
+                        <Clock size={9} className="text-[#ff8888]" />
+                        <span className="text-[#ff8888]">
+                          冲突时长 {formatDuration(conflict.duration)}
+                        </span>
+                        {conflict.firstSeenDay && (
+                          <>
+                            <span className="mx-1 text-[#4a5a7a]">·</span>
+                            <span className="text-[#6a7a9a]">
+                              第 {conflict.firstSeenDay} 天出现
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex gap-1.5">
+                        <button
+                          title={pauseTip}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const cart = carts.find(c => c.id === conflict.lowBatteryCartId)
+                            if (cart?.isPaused) {
+                              resumeCart(conflict.lowBatteryCartId)
+                            } else {
+                              pauseLowSpeedCartInConflict(conflict.id)
+                            }
+                          }}
+                          className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold transition-colors ${
+                            isPaused
+                              ? "bg-[#ffd70022] border border-[#ffd70044] text-[#ffd700] hover:bg-[#ffd70033]"
+                              : "bg-[#ff888811] border border-[#ff666633] text-[#ff6666] hover:bg-[#ff666622]"
+                          }`}
+                        >
+                          <Pause size={10} />
+                          {isPaused ? "恢复低电车" : "暂停低电车"}
+                        </button>
+                        <button
+                          title={staggerTip}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            staggerDeparture(conflict.id)
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold bg-[#00d4ff11] border border-[#00d4ff33] text-[#00d4ff] hover:bg-[#00d4ff22] transition-colors"
+                        >
+                          <Zap size={10} />
+                          错峰出发
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           ))}
