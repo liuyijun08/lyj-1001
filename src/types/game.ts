@@ -2,6 +2,34 @@ export type MineralType = "he3" | "titanium" | "iron" | "silicon"
 
 export type CartStatus = "idle" | "toMine" | "mining" | "toBase" | "unloading" | "charging"
 
+export type SupplyStatus = "pending" | "completed" | "cancelled"
+
+export interface SupplyRecord {
+  id: string
+  mineId: string
+  mineName: string
+  mineralType: MineralType
+  requestDay: number
+  cost: number
+  status: SupplyStatus
+  refundAmount: number
+  completedDay?: number
+  cancelledDay?: number
+  supplyAmount: number
+}
+
+export interface DailyRecoveryDetail {
+  day: number
+  mineId: string
+  mineName: string
+  mineralType: MineralType
+  baseRecovery: number
+  supplyBonus: number
+  totalRecovery: number
+  maxReserve: number
+  remainingAfter: number
+}
+
 export interface MineNode {
   id: string
   name: string
@@ -12,6 +40,7 @@ export interface MineNode {
   x: number
   y: number
   pendingSupply: boolean
+  currentSupplyId: string | null
 }
 
 export interface Track {
@@ -66,6 +95,10 @@ export interface DayLog {
   income: number
   expense: number
   collected: Record<MineralType, number>
+  supplyCompleted: SupplyRecord[]
+  supplyCancelled: SupplyRecord[]
+  recoveryDetails: DailyRecoveryDetail[]
+  supplyRefunds: number
 }
 
 export interface ConflictInfo {
@@ -98,6 +131,8 @@ export interface GameState {
   lastSettlementDay: number
   dailyCollected: Record<MineralType, number>
   notification: { message: string; type: "success" | "error" | "info"; visible: boolean }
+  supplyQueue: SupplyRecord[]
+  dailyRecoveryDetails: DailyRecoveryDetail[]
 }
 
 export const MINERAL_COLORS: Record<MineralType, string> = {

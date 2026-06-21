@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog } from "@/types/game"
+import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail } from "@/types/game"
 import { MINERAL_PRICES } from "@/types/game"
 import {
   INITIAL_RESOURCES, INITIAL_MINES, INITIAL_CARTS, BASE_POSITION,
@@ -75,13 +75,14 @@ interface GameActions {
   staggerDeparture: (conflictId: string) => void
   forceReturnCart: (cartId: string) => void
   requestSupplyPlan: (mineId: string) => void
+  cancelSupplyPlan: (supplyId: string) => void
 }
 
 const initialState = {
   day: 1,
   dayProgress: 0,
   resources: { ...INITIAL_RESOURCES },
-  mineNodes: INITIAL_MINES.map(m => ({ ...m })),
+  mineNodes: INITIAL_MINES.map(m => ({ ...m, currentSupplyId: null })),
   tracks: [] as Track[],
   carts: INITIAL_CARTS.map(c => ({ ...c })),
   routes: [] as CartRoute[],
@@ -98,6 +99,8 @@ const initialState = {
   lastSettlementDay: 0,
   dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 } as Record<MineralType, number>,
   notification: { message: "", type: "info" as const, visible: false },
+  supplyQueue: [] as SupplyRecord[],
+  dailyRecoveryDetails: [] as DailyRecoveryDetail[],
 }
 
 export const useGameStore = create<GameState & GameActions>()(
@@ -544,21 +547,68 @@ export const useGameStore = create<GameState & GameActions>()(
         const newResources = { ...state.resources }
         newResources.credits = newResources.credits + income - expense
 
+        const completedSupplies: SupplyRecord[] = []
+        const cancelledSupplies: SupplyRecord[] = []
+        const recoveryDetails: DailyRecoveryDetail[] = []
+        let supplyRefunds = 0
+
+        const newMines = state.mineNodes.map(m => {
+          const supplyBonus = m.pendingSupply ? m.dailyYield : 0
+          const baseRecovery = m.dailyYield
+          const totalRecovery = baseRecovery + supplyBonus
+          const newRemaining = Math.min(m.maxReserve, m.remaining + totalRecovery)
+
+          if (m.pendingSupply && m.currentSupplyId) {
+            const supply = state.supplyQueue.find(s => s.id === m.currentSupplyId)
+            if (supply) {
+              const completedSupply: SupplyRecord = {
+                ...supply,
+                status: "completed",
+                completedDay: state.day,
+              }
+              completedSupplies.push(completedSupply)
+            }
+          }
+
+          const detail: DailyRecoveryDetail = {
+            day: state.day,
+            mineId: m.id,
+            mineName: m.name,
+            mineralType: m.mineralType,
+            baseRecovery,
+            supplyBonus,
+            totalRecovery,
+            maxReserve: m.maxReserve,
+            remainingAfter: newRemaining,
+          }
+          recoveryDetails.push(detail)
+
+          return {
+            ...m,
+            remaining: newRemaining,
+            pendingSupply: false,
+            currentSupplyId: null,
+          }
+        })
+
+        const newSupplyQueue = state.supplyQueue.map(s => {
+          if (s.status === "pending") {
+            const completed = completedSupplies.find(c => c.id === s.id)
+            if (completed) return completed
+          }
+          return s
+        })
+
         const dayLog: DayLog = {
           day: state.day,
           income,
           expense,
           collected,
+          supplyCompleted: completedSupplies,
+          supplyCancelled: cancelledSupplies,
+          recoveryDetails,
+          supplyRefunds,
         }
-
-        const newMines = state.mineNodes.map(m => {
-          const supplyBonus = m.pendingSupply ? m.dailyYield : 0
-          return {
-            ...m,
-            remaining: Math.min(m.maxReserve, m.remaining + m.dailyYield + supplyBonus),
-            pendingSupply: false,
-          }
-        })
 
         const newCarts = state.carts.map(c => {
           const needsCharging = c.currentBattery < c.maxBattery * 0.5
@@ -590,6 +640,8 @@ export const useGameStore = create<GameState & GameActions>()(
           isPaused: true,
           conflicts: [],
           dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
+          supplyQueue: newSupplyQueue,
+          dailyRecoveryDetails: recoveryDetails,
         }))
       },
 
@@ -798,13 +850,55 @@ export const useGameStore = create<GameState & GameActions>()(
           return
         }
 
+        const supplyRecord: SupplyRecord = {
+          id: genId("supply"),
+          mineId,
+          mineName: mine.name,
+          mineralType: mine.mineralType,
+          requestDay: state.day,
+          cost: SUPPLY_PLAN_COST,
+          status: "pending",
+          refundAmount: Math.round(SUPPLY_PLAN_COST * 0.7),
+          supplyAmount: mine.dailyYield,
+        }
+
         set(s => ({
           resources: { ...s.resources, credits: s.resources.credits - SUPPLY_PLAN_COST },
           mineNodes: s.mineNodes.map(m =>
-            m.id === mineId ? { ...m, pendingSupply: true } : m
+            m.id === mineId ? { ...m, pendingSupply: true, currentSupplyId: supplyRecord.id } : m
           ),
+          supplyQueue: [...s.supplyQueue, supplyRecord],
         }))
         get().showNotification(`${mine.name} 补给计划已安排，跨日生效`, "success")
+      },
+
+      cancelSupplyPlan: (supplyId) => {
+        const state = get()
+        const supply = state.supplyQueue.find(s => s.id === supplyId)
+        if (!supply) return
+
+        if (supply.status !== "pending") {
+          get().showNotification("该补给已生效或已取消，无法操作", "error")
+          return
+        }
+
+        const refund = supply.refundAmount
+        const updatedSupply: SupplyRecord = {
+          ...supply,
+          status: "cancelled",
+          cancelledDay: state.day,
+        }
+
+        set(s => ({
+          resources: { ...s.resources, credits: s.resources.credits + refund },
+          supplyQueue: s.supplyQueue.map(s =>
+            s.id === supplyId ? updatedSupply : s
+          ),
+          mineNodes: s.mineNodes.map(m =>
+            m.id === supply.mineId ? { ...m, pendingSupply: false, currentSupplyId: null } : m
+          ),
+        }))
+        get().showNotification(`补给已取消，退还 ${refund} 金币（70%）`, "success")
       },
     }),
     {
@@ -821,6 +915,8 @@ export const useGameStore = create<GameState & GameActions>()(
         gameSpeed: state.gameSpeed,
         lastSettlementDay: state.lastSettlementDay,
         dailyCollected: state.dailyCollected,
+        supplyQueue: state.supplyQueue,
+        dailyRecoveryDetails: state.dailyRecoveryDetails,
       }),
     }
   )
