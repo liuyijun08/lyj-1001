@@ -1,6 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail } from "@/types/game"
+import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail, LevelState, LevelResult, LevelProgress, AppView } from "@/types/game"
 import { MINERAL_PRICES } from "@/types/game"
 import {
   INITIAL_RESOURCES, INITIAL_MINES, INITIAL_CARTS, BASE_POSITION,
@@ -9,6 +9,7 @@ import {
   CART_MAINTENANCE, BASE_CHARGE_RATE, MAP_WIDTH, MAP_HEIGHT, NEW_CART_COST,
   SUPPLY_PLAN_COST,
 } from "@/config/gameConfig"
+import { LEVELS, getLevelById } from "@/config/levels"
 
 function calcDistance(x1: number, y1: number, x2: number, y2: number) {
   return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
@@ -76,6 +77,28 @@ interface GameActions {
   forceReturnCart: (cartId: string) => void
   requestSupplyPlan: (mineId: string) => void
   cancelSupplyPlan: (supplyId: string) => void
+  startLevel: (levelId: number) => void
+  exitLevel: () => void
+  getLevelProgress: () => LevelProgress[]
+  checkLevelComplete: () => void
+  closeLevelComplete: () => void
+  setInLevelMode: (mode: boolean) => void
+  setView: (view: AppView) => void
+}
+
+function initLevelResults(): Record<number, LevelResult> {
+  const results: Record<number, LevelResult> = {}
+  for (const level of LEVELS) {
+    results[level.id] = {
+      levelId: level.id,
+      stars: 0,
+      completed: false,
+      bestStars: 0,
+      unlocked: level.id === 1,
+      progress: level.targets.map(t => ({ targetId: t.id, current: 0, completed: false })),
+    }
+  }
+  return results
 }
 
 const initialState = {
@@ -101,6 +124,16 @@ const initialState = {
   notification: { message: "", type: "info" as const, visible: false },
   supplyQueue: [] as SupplyRecord[],
   dailyRecoveryDetails: [] as DailyRecoveryDetail[],
+  level: {
+    currentLevelId: null,
+    results: initLevelResults(),
+    showLevelComplete: false,
+    completedStars: 0,
+  } as LevelState,
+  totalCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 } as Record<MineralType, number>,
+  totalMiningIncome: 0,
+  inLevelMode: false,
+  currentView: "menu" as AppView,
 }
 
 export const useGameStore = create<GameState & GameActions>()(
@@ -158,6 +191,10 @@ export const useGameStore = create<GameState & GameActions>()(
           resources: { ...s.resources, credits: s.resources.credits - buildCost },
           trackStartId: null,
         }))
+
+        setTimeout(() => {
+          get().checkLevelComplete()
+        }, 50)
       },
 
       selectCart: (cartId) => set({ selectedCartId: cartId }),
@@ -519,6 +556,11 @@ export const useGameStore = create<GameState & GameActions>()(
           }
         }
 
+        const newTotalCollected = { ...state.totalCollected }
+        for (const m of Object.keys(dailyCollectedAcc) as MineralType[]) {
+          newTotalCollected[m] = (newTotalCollected[m] || 0) + dailyCollectedAcc[m]
+        }
+
         set({
           day: newDay,
           dayProgress: newDayProgress % DAY_DURATION,
@@ -529,6 +571,7 @@ export const useGameStore = create<GameState & GameActions>()(
           showSettlement,
           dailyCollected: dailyCollectedAcc,
           isPaused: newIsPaused || state.isPaused,
+          totalCollected: newTotalCollected,
         })
       },
 
@@ -629,6 +672,8 @@ export const useGameStore = create<GameState & GameActions>()(
           }
         })
 
+        const newTotalMiningIncome = state.totalMiningIncome + income
+
         set(s => ({
           day: s.day + 1,
           dayProgress: 0,
@@ -642,7 +687,12 @@ export const useGameStore = create<GameState & GameActions>()(
           dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
           supplyQueue: newSupplyQueue,
           dailyRecoveryDetails: recoveryDetails,
+          totalMiningIncome: newTotalMiningIncome,
         }))
+
+        setTimeout(() => {
+          get().checkLevelComplete()
+        }, 100)
       },
 
       closeSettlement: () => set({ showSettlement: false }),
@@ -832,6 +882,8 @@ export const useGameStore = create<GameState & GameActions>()(
           carts: INITIAL_CARTS.map(c => ({ ...c })),
           mineNodes: INITIAL_MINES.map(m => ({ ...m })),
           dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
+          currentView: "game",
+          inLevelMode: false,
         })
       },
 
@@ -900,6 +952,175 @@ export const useGameStore = create<GameState & GameActions>()(
         }))
         get().showNotification(`补给已取消，退还 ${refund} 金币（70%）`, "success")
       },
+
+      setInLevelMode: (mode) => set({ inLevelMode: mode }),
+
+      setView: (view) => set({ currentView: view }),
+
+      startLevel: (levelId) => {
+        const level = getLevelById(levelId)
+        if (!level) return
+
+        const state = get()
+        const result = state.level.results[levelId]
+        const unlocked = levelId === 1 || result?.unlocked === true
+        if (!unlocked) {
+          get().showNotification("该关卡未解锁", "error")
+          return
+        }
+
+        const initialRes = { ...INITIAL_RESOURCES }
+        if (level.initialResources) {
+          Object.assign(initialRes, level.initialResources)
+        }
+
+        let filteredMines = INITIAL_MINES
+        if (level.initialMineIds && level.initialMineIds.length > 0) {
+          filteredMines = INITIAL_MINES.filter(m => level.initialMineIds!.includes(m.id))
+        }
+
+        set({
+          day: 1,
+          dayProgress: 0,
+          resources: initialRes,
+          mineNodes: filteredMines.map(m => ({ ...m, currentSupplyId: null })),
+          tracks: [],
+          carts: INITIAL_CARTS.map(c => ({ ...c, x: BASE_POSITION.x, y: BASE_POSITION.y })),
+          routes: [],
+          dayLogs: [],
+          gameSpeed: 1,
+          isPaused: true,
+          selectedNodeId: null,
+          trackBuildMode: false,
+          trackStartId: null,
+          selectedCartId: null,
+          conflicts: [],
+          showSettlement: false,
+          dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
+          supplyQueue: [],
+          dailyRecoveryDetails: [],
+          totalCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
+          totalMiningIncome: 0,
+          inLevelMode: true,
+          currentView: "game",
+          level: {
+            ...state.level,
+            currentLevelId: levelId,
+            showLevelComplete: false,
+            completedStars: 0,
+          },
+        })
+        get().showNotification(`关卡 ${level.name} 开始！`, "success")
+      },
+
+      exitLevel: () => {
+        set(s => ({
+          level: { ...s.level, currentLevelId: null, showLevelComplete: false },
+          inLevelMode: false,
+        }))
+      },
+
+      getLevelProgress: () => {
+        const state = get()
+        if (!state.level.currentLevelId) return []
+        const level = getLevelById(state.level.currentLevelId)
+        if (!level) return []
+
+        const connectedMines = state.mineNodes.filter(m => {
+          const path = findPath(m.id, state.tracks, state.basePosition, state.mineNodes)
+          return path !== null && path.length > 0
+        })
+
+        return level.targets.map(target => {
+          let current = 0
+          switch (target.type) {
+            case "tracks":
+              current = state.tracks.length
+              break
+            case "credits":
+              current = state.totalMiningIncome
+              break
+            case "minerals":
+              current = target.mineralType ? state.totalCollected[target.mineralType] : 0
+              break
+            case "minesConnected":
+              current = connectedMines.length
+              break
+            case "days":
+              current = state.day
+              break
+          }
+          return {
+            targetId: target.id,
+            current,
+            completed: current >= target.value,
+          }
+        })
+      },
+
+      checkLevelComplete: () => {
+        const state = get()
+        if (!state.level.currentLevelId || state.level.showLevelComplete) return
+        if (!state.inLevelMode) return
+
+        const level = getLevelById(state.level.currentLevelId)
+        if (!level) return
+
+        const progress = get().getLevelProgress()
+        const allTargetsComplete = progress.every(p => p.completed)
+        if (!allTargetsComplete) return
+
+        let stars: 0 | 1 | 2 | 3 = 0
+        const progressMap: Record<string, number> = {}
+        for (const p of progress) {
+          progressMap[p.targetId] = p.current
+        }
+
+        for (const sc of level.starConditions) {
+          const met = sc.condition.every(c => (progressMap[c.targetId] || 0) >= c.value)
+          if (met) stars = sc.stars
+        }
+
+        if (stars === 0) stars = 1
+
+        const prevResult = state.level.results[level.id]
+        const bestStars: 0 | 1 | 2 | 3 = Math.max(prevResult?.bestStars || 0, stars) as 0 | 1 | 2 | 3
+
+        const newResults = { ...state.level.results }
+        newResults[level.id] = {
+          levelId: level.id,
+          stars,
+          completed: true,
+          bestStars,
+          unlocked: true,
+          progress,
+        }
+
+        if (level.reward.unlockLevel) {
+          for (const unlockId of level.reward.unlockLevel) {
+            if (newResults[unlockId]) {
+              newResults[unlockId] = { ...newResults[unlockId], unlocked: true }
+            }
+          }
+        }
+
+        const rewardCredits = level.reward.credits || 0
+
+        set(s => ({
+          resources: rewardCredits > 0 ? { ...s.resources, credits: s.resources.credits + rewardCredits } : s.resources,
+          level: {
+            ...s.level,
+            results: newResults,
+            showLevelComplete: true,
+            completedStars: stars,
+          },
+          isPaused: true,
+        }))
+
+        get().showNotification(`恭喜通关！获得 ${stars} 星${rewardCredits > 0 ? `，奖励 ${rewardCredits} 金币` : ""}`, "success")
+      },
+
+      closeLevelComplete: () => set(s => ({ level: { ...s.level, showLevelComplete: false } })),
     }),
     {
       name: "lunar-miner-game",
@@ -917,6 +1138,9 @@ export const useGameStore = create<GameState & GameActions>()(
         dailyCollected: state.dailyCollected,
         supplyQueue: state.supplyQueue,
         dailyRecoveryDetails: state.dailyRecoveryDetails,
+        level: state.level,
+        totalCollected: state.totalCollected,
+        totalMiningIncome: state.totalMiningIncome,
       }),
     }
   )

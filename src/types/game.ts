@@ -110,6 +110,8 @@ export interface ConflictInfo {
   firstSeenDay: number
 }
 
+export type AppView = "menu" | "levelSelect" | "game"
+
 export interface GameState {
   day: number
   dayProgress: number
@@ -133,6 +135,11 @@ export interface GameState {
   notification: { message: string; type: "success" | "error" | "info"; visible: boolean }
   supplyQueue: SupplyRecord[]
   dailyRecoveryDetails: DailyRecoveryDetail[]
+  level: LevelState
+  totalCollected: Record<MineralType, number>
+  totalMiningIncome: number
+  inLevelMode: boolean
+  currentView: AppView
 }
 
 export const MINERAL_COLORS: Record<MineralType, string> = {
@@ -163,4 +170,62 @@ export const CART_STATUS_LABELS: Record<CartStatus, string> = {
   toBase: "返回基地",
   unloading: "卸载中",
   charging: "充电中",
+}
+
+export type TargetType = "tracks" | "credits" | "minerals" | "minesConnected" | "days"
+
+export interface LevelTarget {
+  id: string
+  type: TargetType
+  label: string
+  value: number
+  mineralType?: MineralType
+}
+
+export interface StarCondition {
+  stars: 1 | 2 | 3
+  label: string
+  condition: {
+    targetId: string
+    value: number
+  }[]
+}
+
+export interface LevelReward {
+  credits?: number
+  unlockLevel?: number[]
+}
+
+export interface Level {
+  id: number
+  name: string
+  description: string
+  icon: string
+  targets: LevelTarget[]
+  starConditions: StarCondition[]
+  reward: LevelReward
+  initialResources?: Partial<Resources>
+  initialMineIds?: string[]
+}
+
+export interface LevelProgress {
+  targetId: string
+  current: number
+  completed: boolean
+}
+
+export interface LevelResult {
+  levelId: number
+  stars: 0 | 1 | 2 | 3
+  completed: boolean
+  bestStars: 0 | 1 | 2 | 3
+  unlocked: boolean
+  progress: LevelProgress[]
+}
+
+export interface LevelState {
+  currentLevelId: number | null
+  results: Record<number, LevelResult>
+  showLevelComplete: boolean
+  completedStars: 0 | 1 | 2 | 3
 }
