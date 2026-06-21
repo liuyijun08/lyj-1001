@@ -4,7 +4,7 @@ import { NEW_CART_COST } from "@/config/gameConfig"
 import ConflictPanel from "@/components/ConflictPanel"
 import {
   Mountain, Truck, Route, Battery, Package, AlertTriangle,
-  Play, Square, ShoppingCart, Info
+  Play, Square, ShoppingCart, Info, BatteryCharging
 } from "lucide-react"
 
 const mineralTypes: MineralType[] = ["he3", "titanium", "iron", "silicon"]
@@ -20,6 +20,7 @@ export default function SidePanel() {
   const basePosition = useGameStore(s => s.basePosition)
   const assignCartToMine = useGameStore(s => s.assignCartToMine)
   const unassignCart = useGameStore(s => s.unassignCart)
+  const forceReturnCart = useGameStore(s => s.forceReturnCart)
   const buyCart = useGameStore(s => s.buyCart)
   const resources = useGameStore(s => s.resources)
   const conflicts = useGameStore(s => s.conflicts)
@@ -148,7 +149,8 @@ export default function SidePanel() {
             const batteryRatio = cart.currentBattery / cart.maxBattery
             const loadRatio = cart.maxLoad > 0 ? cart.currentLoad / cart.maxLoad : 0
             const isConflicting = conflicts.some(c => c.cartId1 === cart.id || c.cartId2 === cart.id)
-            const isDraggable = cart.status === "idle"
+            const isLowBattery = batteryRatio < 0.2
+            const isDraggable = cart.status === "idle" && !isLowBattery
 
             return (
               <div
@@ -173,6 +175,7 @@ export default function SidePanel() {
                   <span className="text-[#d4cfc4] text-xs font-bold">{cart.name}</span>
                   <div className="flex items-center gap-1.5">
                     {isConflicting && <AlertTriangle size={12} className="text-[#ff4444] animate-pulse" />}
+                    {isLowBattery && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#ff444422] text-[#ff4444] border border-[#ff444444] animate-pulse">低电</span>}
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                         cart.status === "idle"
@@ -192,12 +195,12 @@ export default function SidePanel() {
                 <div className="flex gap-2 mb-1.5">
                   <div className="flex-1">
                     <div className="flex items-center gap-1 mb-0.5">
-                      <Battery size={8} className={batteryRatio > 0.3 ? "text-[#00ff88]" : "text-[#ff4444]"} />
+                      <Battery size={8} className={!isLowBattery ? "text-[#00ff88]" : "text-[#ff4444]"} />
                       <span className="text-[10px] text-[#6a7a9a]">电量</span>
                     </div>
                     <div className="h-1 bg-[#1a2540] rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all ${batteryRatio > 0.3 ? "bg-[#00ff88]" : "bg-[#ff4444]"}`}
+                        className={`h-full rounded-full transition-all ${!isLowBattery ? "bg-[#00ff88]" : "bg-[#ff4444]"}`}
                         style={{ width: `${batteryRatio * 100}%` }}
                       />
                     </div>
@@ -226,36 +229,68 @@ export default function SidePanel() {
 
                 {cart.status === "idle" && isSelected && (
                   <div>
-                    <p className="text-[10px] text-[#6a7a9a] mb-1.5">分配到矿区：</p>
-                    <div className="flex flex-wrap gap-1">
-                      {reachableMines.map(mine => (
+                    {isLowBattery ? (
+                      <div className="bg-[#ff444411] border border-[#ff444433] rounded p-2 mb-2">
+                        <p className="text-[10px] text-[#ff6666] font-medium">电量低于20%，禁止派遣新任务</p>
                         <button
-                          key={mine.id}
-                          onClick={() => assignCartToMine(cart.id, mine.id)}
-                          className="text-[10px] px-2 py-1 rounded border transition-colors hover:bg-opacity-20"
-                          style={{
-                            color: MINERAL_COLORS[mine.mineralType],
-                            borderColor: `${MINERAL_COLORS[mine.mineralType]}44`,
-                            backgroundColor: `${MINERAL_COLORS[mine.mineralType]}11`,
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            forceReturnCart(cart.id)
                           }}
+                          className="mt-1.5 w-full flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold bg-[#ff444422] border border-[#ff4444] text-[#ff4444] hover:bg-[#ff444433] transition-colors"
                         >
-                          {mine.name}
+                          <BatteryCharging size={10} />
+                          立即充电
                         </button>
-                      ))}
-                      {reachableMines.length === 0 && (
-                        <span className="text-[10px] text-[#4a5a7a]">暂无可达矿点，请先铺设轨道</span>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-[10px] text-[#6a7a9a] mb-1.5">分配到矿区：</p>
+                        <div className="flex flex-wrap gap-1">
+                          {reachableMines.map(mine => (
+                            <button
+                              key={mine.id}
+                              onClick={() => assignCartToMine(cart.id, mine.id)}
+                              className="text-[10px] px-2 py-1 rounded border transition-colors hover:bg-opacity-20"
+                              style={{
+                                color: MINERAL_COLORS[mine.mineralType],
+                                borderColor: `${MINERAL_COLORS[mine.mineralType]}44`,
+                                backgroundColor: `${MINERAL_COLORS[mine.mineralType]}11`,
+                              }}
+                            >
+                              {mine.name}
+                            </button>
+                          ))}
+                          {reachableMines.length === 0 && (
+                            <span className="text-[10px] text-[#4a5a7a]">暂无可达矿点，请先铺设轨道</span>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
-                {cart.status !== "idle" && (
-                  <button
-                    onClick={() => unassignCart(cart.id)}
-                    className="text-[10px] px-2 py-1 rounded bg-[#ff444422] border border-[#ff444444] text-[#ff4444] hover:bg-[#ff444433] transition-colors"
-                  >
-                    召回矿车
-                  </button>
+                {cart.status !== "idle" && cart.status !== "charging" && (
+                  <div className="flex gap-1.5">
+                    {isLowBattery && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          forceReturnCart(cart.id)
+                        }}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold bg-[#ff444422] border border-[#ff4444] text-[#ff4444] hover:bg-[#ff444433] transition-colors"
+                      >
+                        <BatteryCharging size={10} />
+                        强制返航
+                      </button>
+                    )}
+                    <button
+                      onClick={() => unassignCart(cart.id)}
+                      className={`${isLowBattery ? "flex-1" : "w-full"} text-[10px] px-2 py-1 rounded bg-[#ff444422] border border-[#ff444444] text-[#ff4444] hover:bg-[#ff444433] transition-colors`}
+                    >
+                      召回矿车
+                    </button>
+                  </div>
                 )}
               </div>
             )

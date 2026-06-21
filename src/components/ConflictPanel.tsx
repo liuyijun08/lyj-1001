@@ -94,8 +94,8 @@ export default function ConflictPanel() {
   }, [conflicts, carts, tracks])
 
   const getBatteryColor = (ratio: number) => {
-    if (ratio <= 0.15) return "#ff4444"
-    if (ratio <= 0.3) return "#ff8c00"
+    if (ratio <= 0.2) return "#ff4444"
+    if (ratio <= 0.4) return "#ff8c00"
     return "#00ff88"
   }
 

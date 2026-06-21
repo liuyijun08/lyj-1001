@@ -72,6 +72,7 @@ interface GameActions {
   resumeCart: (cartId: string) => void
   pauseLowSpeedCartInConflict: (conflictId: string) => void
   staggerDeparture: (conflictId: string) => void
+  forceReturnCart: (cartId: string) => void
 }
 
 const initialState = {
@@ -175,10 +176,16 @@ export const useGameStore = create<GameState & GameActions>()(
           return
         }
 
+        const batteryRatio = cart.currentBattery / cart.maxBattery
+        if (batteryRatio < 0.2) {
+          get().showNotification(`${cart.name} 电量低于20%，强制返航中，无法派遣新任务`, "error")
+          return
+        }
+
         const totalDist = path.reduce((sum, t) => sum + t.length, 0)
         const roundTripBattery = totalDist * 2 * cart.batteryPerUnit
         if (cart.currentBattery < roundTripBattery * 0.5) {
-          get().showNotification(`${cart.name} 电量不足，请等待充电`, "error")
+          get().showNotification(`${cart.name} 电量不足以完成往返，请等待充电`, "error")
           return
         }
 
@@ -206,10 +213,13 @@ export const useGameStore = create<GameState & GameActions>()(
         const cart = state.carts.find(c => c.id === cartId)
         if (!cart) return
 
+        const needsCharging = cart.currentBattery < cart.maxBattery * 0.5
+        const newStatus = needsCharging ? "charging" as const : "idle" as const
+
         set(s => ({
           carts: s.carts.map(c =>
             c.id === cartId
-              ? { ...c, status: "idle" as const, routeId: null, assignedMineId: null, currentTrackId: null, trackProgress: 0, x: s.basePosition.x, y: s.basePosition.y, miningProgress: 0 }
+              ? { ...c, status: newStatus, routeId: null, assignedMineId: null, currentTrackId: null, trackProgress: 0, x: s.basePosition.x, y: s.basePosition.y, miningProgress: 0 }
               : c
           ),
           routes: s.routes.filter(r => r.cartId !== cartId),
@@ -326,7 +336,7 @@ export const useGameStore = create<GameState & GameActions>()(
               }
             }
 
-            if (cart.currentBattery <= cart.maxBattery * 0.15) {
+            if (cart.currentBattery <= cart.maxBattery * 0.2) {
               cart.status = "toBase"
               cart.direction = "backward"
               cart.trackProgress = 1 - cart.trackProgress
@@ -544,12 +554,24 @@ export const useGameStore = create<GameState & GameActions>()(
           remaining: Math.min(m.maxReserve, m.remaining + m.dailyYield),
         }))
 
-        const newCarts = state.carts.map(c => ({
-          ...c,
-          x: state.basePosition.x,
-          y: state.basePosition.y,
-          currentTrackId: c.status === "idle" || c.status === "charging" ? null : c.currentTrackId,
-        }))
+        const newCarts = state.carts.map(c => {
+          const needsCharging = c.currentBattery < c.maxBattery * 0.5
+          const newStatus = needsCharging ? "charging" as const : "idle" as const
+          return {
+            ...c,
+            x: state.basePosition.x,
+            y: state.basePosition.y,
+            status: newStatus,
+            routeId: null,
+            assignedMineId: null,
+            currentTrackId: null,
+            trackProgress: 0,
+            miningProgress: 0,
+            isPaused: false,
+            pauseRemaining: 0,
+            departureDelay: 0,
+          }
+        })
 
         set(s => ({
           day: s.day + 1,
@@ -678,6 +700,71 @@ export const useGameStore = create<GameState & GameActions>()(
           ),
         }))
         get().showNotification(`${lowBatteryCart.name} 下次出发将延迟 ${delayDuration.toFixed(1)} 秒`, "success")
+      },
+
+      forceReturnCart: (cartId) => {
+        const state = get()
+        const cart = state.carts.find(c => c.id === cartId)
+        if (!cart) return
+
+        if (cart.status === "charging") {
+          get().showNotification(`${cart.name} 正在充电中`, "info")
+          return
+        }
+
+        if (cart.status === "idle") {
+          if (cart.currentBattery >= cart.maxBattery) {
+            get().showNotification(`${cart.name} 电量已满，无需充电`, "info")
+            return
+          }
+          set(s => ({
+            carts: s.carts.map(c =>
+              c.id === cartId
+                ? { ...c, status: "charging" as const, miningProgress: 0 }
+                : c
+            ),
+          }))
+          get().showNotification(`${cart.name} 已开始充电`, "success")
+          return
+        }
+
+        if (cart.status === "toBase") {
+          get().showNotification(`${cart.name} 正在返航中`, "info")
+          return
+        }
+
+        if (cart.status === "toMine") {
+          set(s => ({
+            carts: s.carts.map(c =>
+              c.id === cartId
+                ? { ...c, status: "toBase" as const, direction: "backward" as const, trackProgress: 1 - c.trackProgress }
+                : c
+            ),
+          }))
+          get().showNotification(`${cart.name} 已强制返航`, "success")
+          return
+        }
+
+        if (cart.status === "mining" || cart.status === "unloading") {
+          const route = state.routes.find(r => r.id === cart.routeId)
+          if (route && route.trackIds.length > 0) {
+            set(s => ({
+              carts: s.carts.map(c =>
+                c.id === cartId
+                  ? {
+                      ...c,
+                      status: "toBase" as const,
+                      direction: "backward" as const,
+                      currentTrackId: route.trackIds[route.trackIds.length - 1],
+                      trackProgress: 0,
+                      miningProgress: 0,
+                    }
+                  : c
+              ),
+            }))
+            get().showNotification(`${cart.name} 已强制返航`, "success")
+          }
+        }
       },
 
       resetGame: () => {
