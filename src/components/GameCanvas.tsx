@@ -31,9 +31,12 @@ export default function GameCanvas() {
   const lastTimeRef = useRef<number>(0)
   const [dragHoverMineId, setDragHoverMineId] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [dragInvalidMineId, setDragInvalidMineId] = useState<string | null>(null)
 
   const store = useGameStore()
   const trackBuildMode = useGameStore(s => s.trackBuildMode)
+  const notification = useGameStore(s => s.notification)
+  const hideNotification = useGameStore(s => s.hideNotification)
 
   const render = useCallback(() => {
     const canvas = canvasRef.current
@@ -132,8 +135,19 @@ export default function GameCanvas() {
       const isSelected = state.selectedNodeId === mine.id
       const isTrackStart = state.trackStartId === mine.id
       const isDragHover = dragHoverMineId === mine.id
+      const isDragInvalid = dragInvalidMineId === mine.id
 
-      if (isDragHover) {
+      if (isDragInvalid) {
+        const pulse = Math.sin(Date.now() / 120) * 0.5 + 0.5
+        ctx.beginPath()
+        ctx.arc(mine.x, mine.y, NODE_RADIUS + 12, 0, Math.PI * 2)
+        ctx.strokeStyle = "#ff4444"
+        ctx.lineWidth = 3
+        ctx.shadowColor = "#ff4444"
+        ctx.shadowBlur = 16 + pulse * 10
+        ctx.stroke()
+        ctx.shadowBlur = 0
+      } else if (isDragHover) {
         const pulse = Math.sin(Date.now() / 120) * 0.5 + 0.5
         ctx.beginPath()
         ctx.arc(mine.x, mine.y, NODE_RADIUS + 12, 0, Math.PI * 2)
@@ -296,7 +310,7 @@ export default function GameCanvas() {
         20
       )
     }
-  }, [dragHoverMineId, isDragging])
+  }, [dragHoverMineId, dragInvalidMineId, isDragging])
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLCanvasElement>) => {
     e.preventDefault()
@@ -311,19 +325,27 @@ export default function GameCanvas() {
 
     const state = useGameStore.getState()
     let hoverId: string | null = null
+    let invalidId: string | null = null
     for (const mine of state.mineNodes) {
       const dist = Math.sqrt((mx - mine.x) ** 2 + (my - mine.y) ** 2)
       if (dist <= NODE_RADIUS + 10) {
-        hoverId = mine.id
+        const reachable = state.isMineReachable(mine.id)
+        if (reachable) {
+          hoverId = mine.id
+        } else {
+          invalidId = mine.id
+        }
         break
       }
     }
     setDragHoverMineId(hoverId)
+    setDragInvalidMineId(invalidId)
     setIsDragging(true)
   }, [])
 
   const handleDragLeave = useCallback(() => {
     setDragHoverMineId(null)
+    setDragInvalidMineId(null)
     setIsDragging(false)
   }, [])
 
@@ -331,6 +353,7 @@ export default function GameCanvas() {
     e.preventDefault()
     const cartId = e.dataTransfer.getData("text/plain")
     setDragHoverMineId(null)
+    setDragInvalidMineId(null)
     setIsDragging(false)
     if (!cartId) return
 
@@ -343,12 +366,17 @@ export default function GameCanvas() {
     const my = (e.clientY - rect.top) * scaleY
 
     const state = useGameStore.getState()
+    let dropped = false
     for (const mine of state.mineNodes) {
       const dist = Math.sqrt((mx - mine.x) ** 2 + (my - mine.y) ** 2)
       if (dist <= NODE_RADIUS + 10) {
         state.assignCartToMine(cartId, mine.id)
+        dropped = true
         break
       }
+    }
+    if (!dropped) {
+      state.showNotification("请将矿车拖到矿点上", "info")
     }
   }, [])
 
@@ -420,16 +448,34 @@ export default function GameCanvas() {
   }, [])
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={MAP_WIDTH}
-      height={MAP_HEIGHT}
-      onClick={handleCanvasClick}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      className={`w-full h-full ${trackBuildMode ? "cursor-crosshair" : isDragging ? "cursor-copy" : "cursor-crosshair"}`}
-      style={{ imageRendering: "auto" }}
-    />
+    <div className="relative w-full h-full">
+      <canvas
+        ref={canvasRef}
+        width={MAP_WIDTH}
+        height={MAP_HEIGHT}
+        onClick={handleCanvasClick}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`w-full h-full ${trackBuildMode ? "cursor-crosshair" : isDragging ? "cursor-copy" : "cursor-crosshair"}`}
+        style={{ imageRendering: "auto" }}
+      />
+
+      {notification.visible && (
+        <div
+          className={`absolute top-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg shadow-lg border text-sm font-medium z-20 transition-all duration-300 ${
+            notification.type === "success"
+              ? "bg-[#00ff8822] border-[#00ff8844] text-[#00ff88]"
+              : notification.type === "error"
+              ? "bg-[#ff444422] border-[#ff444444] text-[#ff6666]"
+              : "bg-[#00d4ff22] border-[#00d4ff44] text-[#00d4ff]"
+          }`}
+          style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
+          onClick={hideNotification}
+        >
+          {notification.message}
+        </div>
+      )}
+    </div>
   )
 }

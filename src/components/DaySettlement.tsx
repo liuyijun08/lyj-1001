@@ -1,7 +1,7 @@
 import { useGameStore } from "@/store/gameStore"
 import { MINERAL_NAMES, MINERAL_COLORS, MineralType, MINERAL_PRICES } from "@/types/game"
 import { TRACK_MAINTENANCE_PER_UNIT, CART_MAINTENANCE } from "@/config/gameConfig"
-import { X, TrendingUp, TrendingDown, Package } from "lucide-react"
+import { X, TrendingUp, TrendingDown, Package, Gem } from "lucide-react"
 
 const mineralTypes: MineralType[] = ["he3", "titanium", "iron", "silicon"]
 
@@ -12,6 +12,7 @@ export default function DaySettlement() {
   const tracks = useGameStore(s => s.tracks)
   const carts = useGameStore(s => s.carts)
   const dayLogs = useGameStore(s => s.dayLogs)
+  const dailyCollected = useGameStore(s => s.dailyCollected)
   const endDay = useGameStore(s => s.endDay)
   const closeSettlement = useGameStore(s => s.closeSettlement)
   const sellMinerals = useGameStore(s => s.sellMinerals)
@@ -21,6 +22,12 @@ export default function DaySettlement() {
   const trackMaint = Math.round(tracks.reduce((s, t) => s + t.length * TRACK_MAINTENANCE_PER_UNIT, 0))
   const cartMaint = carts.length * CART_MAINTENANCE
   const totalExpense = trackMaint + cartMaint
+
+  const todayIncome = mineralTypes.reduce(
+    (sum, type) => sum + (dailyCollected[type] || 0) * MINERAL_PRICES[type],
+    0
+  )
+  const netProfit = todayIncome - totalExpense
 
   const currentLog = dayLogs.find(l => l.day === day)
 
@@ -38,6 +45,99 @@ export default function DaySettlement() {
         </div>
 
         <div className="p-4 space-y-4 overflow-y-auto max-h-[60vh]">
+          <div>
+            <h3 className="text-[#6a7a9a] text-xs font-bold mb-2 flex items-center gap-1.5">
+              <Gem size={12} className="text-[#00d4ff]" />
+              当日采集
+            </h3>
+            <div className="bg-[#0a0e1a] rounded-lg p-3 border border-[#1a2540]">
+              {mineralTypes.some(t => dailyCollected[t] > 0) ? (
+                <div className="space-y-1.5">
+                  {mineralTypes.filter(t => dailyCollected[t] > 0).map(type => (
+                    <div key={type} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: MINERAL_COLORS[type] }} />
+                        <span className="text-[#d4cfc4]">{MINERAL_NAMES[type]}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span style={{ color: MINERAL_COLORS[type], fontFamily: "Orbitron, monospace" }}>
+                          +{Math.round(dailyCollected[type])}
+                        </span>
+                        <span className="text-[#6a7a9a]">× {MINERAL_PRICES[type]}</span>
+                        <span className="text-[#ffd700] w-16 text-right" style={{ fontFamily: "Orbitron, monospace" }}>
+                          +{Math.round(dailyCollected[type] * MINERAL_PRICES[type])}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="border-t border-[#1a2540] pt-1.5 flex justify-between text-xs font-bold">
+                    <span className="text-[#d4cfc4]">采集收入合计</span>
+                    <span className="text-[#00ff88]" style={{ fontFamily: "Orbitron, monospace" }}>
+                      +{todayIncome}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-2 text-[#4a5a7a] text-xs">
+                  当日无采集记录，请调度矿车运输矿物
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-[#6a7a9a] text-xs font-bold mb-2 flex items-center gap-1.5">
+              <TrendingDown size={12} />
+              每日维护支出
+            </h3>
+            <div className="bg-[#0a0e1a] rounded-lg p-3 border border-[#1a2540] space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-[#6a7a9a]">轨道维护 ({tracks.length} 条)</span>
+                <span className="text-[#ff8c00]" style={{ fontFamily: "Orbitron, monospace" }}>-{trackMaint}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-[#6a7a9a]">矿车维护 ({carts.length} 辆)</span>
+                <span className="text-[#ff8c00]" style={{ fontFamily: "Orbitron, monospace" }}>-{cartMaint}</span>
+              </div>
+              <div className="border-t border-[#1a2540] pt-1.5 flex justify-between text-xs font-bold">
+                <span className="text-[#d4cfc4]">总计</span>
+                <span className="text-[#ff4444]" style={{ fontFamily: "Orbitron, monospace" }}>-{totalExpense}</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-[#6a7a9a] text-xs font-bold mb-2 flex items-center gap-1.5">
+              <TrendingUp size={12} />
+              资金状况
+            </h3>
+            <div className="bg-[#0a0e1a] rounded-lg p-3 border border-[#1a2540] space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-[#6a7a9a]">当日采集收入</span>
+                <span className="text-[#00ff88]" style={{ fontFamily: "Orbitron, monospace" }}>+{todayIncome}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-[#6a7a9a]">当日维护支出</span>
+                <span className="text-[#ff4444]" style={{ fontFamily: "Orbitron, monospace" }}>-{totalExpense}</span>
+              </div>
+              <div className="border-t border-[#1a2540] pt-2 flex justify-between text-xs font-bold">
+                <span className="text-[#d4cfc4]">当日净收益</span>
+                <span
+                  style={{ fontFamily: "Orbitron, monospace" }}
+                  className={netProfit >= 0 ? "text-[#00ff88]" : "text-[#ff4444]"}
+                >
+                  {netProfit >= 0 ? "+" : ""}{netProfit}
+                </span>
+              </div>
+              <div className="border-t border-[#1a2540] pt-2 text-center">
+                <span className="text-[#6a7a9a] text-xs">当前资金</span>
+                <div className="text-2xl font-bold text-[#ffd700]" style={{ fontFamily: "Orbitron, monospace" }}>
+                  {Math.round(resources.credits)}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div>
             <h3 className="text-[#6a7a9a] text-xs font-bold mb-2 flex items-center gap-1.5">
               <Package size={12} />
@@ -78,42 +178,6 @@ export default function DaySettlement() {
                   </div>
                 </div>
               ))}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-[#6a7a9a] text-xs font-bold mb-2 flex items-center gap-1.5">
-              <TrendingDown size={12} />
-              每日维护支出
-            </h3>
-            <div className="bg-[#0a0e1a] rounded-lg p-3 border border-[#1a2540] space-y-1.5">
-              <div className="flex justify-between text-xs">
-                <span className="text-[#6a7a9a]">轨道维护 ({tracks.length} 条)</span>
-                <span className="text-[#ff8c00]" style={{ fontFamily: "Orbitron, monospace" }}>-{trackMaint}</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-[#6a7a9a]">矿车维护 ({carts.length} 辆)</span>
-                <span className="text-[#ff8c00]" style={{ fontFamily: "Orbitron, monospace" }}>-{cartMaint}</span>
-              </div>
-              <div className="border-t border-[#1a2540] pt-1.5 flex justify-between text-xs font-bold">
-                <span className="text-[#d4cfc4]">总计</span>
-                <span className="text-[#ff4444]" style={{ fontFamily: "Orbitron, monospace" }}>-{totalExpense}</span>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-[#6a7a9a] text-xs font-bold mb-2 flex items-center gap-1.5">
-              <TrendingUp size={12} />
-              资金状况
-            </h3>
-            <div className="bg-[#0a0e1a] rounded-lg p-3 border border-[#1a2540]">
-              <div className="text-center">
-                <span className="text-[#6a7a9a] text-xs">当前资金</span>
-                <div className="text-2xl font-bold text-[#ffd700]" style={{ fontFamily: "Orbitron, monospace" }}>
-                  {Math.round(resources.credits)}
-                </div>
-              </div>
             </div>
           </div>
 

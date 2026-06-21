@@ -65,6 +65,9 @@ interface GameActions {
   closeSettlement: () => void
   resetGame: () => void
   sellMinerals: (type: MineralType, amount: number) => void
+  showNotification: (message: string, type: "success" | "error" | "info") => void
+  hideNotification: () => void
+  isMineReachable: (mineId: string) => boolean
 }
 
 const initialState = {
@@ -87,6 +90,7 @@ const initialState = {
   showSettlement: false,
   lastSettlementDay: 0,
   dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 } as Record<MineralType, number>,
+  notification: { message: "", type: "info" as const, visible: false },
 }
 
 export const useGameStore = create<GameState & GameActions>()(
@@ -151,14 +155,28 @@ export const useGameStore = create<GameState & GameActions>()(
       assignCartToMine: (cartId, mineId) => {
         const state = get()
         const cart = state.carts.find(c => c.id === cartId)
-        if (!cart || cart.status !== "idle") return
+        const mine = state.mineNodes.find(m => m.id === mineId)
+        if (!cart) {
+          get().showNotification("矿车不存在", "error")
+          return
+        }
+        if (cart.status !== "idle") {
+          get().showNotification(`${cart.name} 正在执行任务，无法调度`, "error")
+          return
+        }
 
         const path = findPath(mineId, state.tracks, state.basePosition, state.mineNodes)
-        if (!path || path.length === 0) return
+        if (!path || path.length === 0) {
+          get().showNotification(`${mine?.name || "该矿点"} 未连通轨道，请先铺设轨道`, "error")
+          return
+        }
 
         const totalDist = path.reduce((sum, t) => sum + t.length, 0)
         const roundTripBattery = totalDist * 2 * cart.batteryPerUnit
-        if (cart.currentBattery < roundTripBattery * 0.5) return
+        if (cart.currentBattery < roundTripBattery * 0.5) {
+          get().showNotification(`${cart.name} 电量不足，请等待充电`, "error")
+          return
+        }
 
         const route: CartRoute = {
           id: genId("route"),
@@ -176,6 +194,7 @@ export const useGameStore = create<GameState & GameActions>()(
               : c
           ),
         }))
+        get().showNotification(`${cart.name} 已调度到 ${mine?.name || "矿区"}`, "success")
       },
 
       unassignCart: (cartId) => {
@@ -521,6 +540,26 @@ export const useGameStore = create<GameState & GameActions>()(
             [type]: s.resources[type] - amount,
           },
         }))
+      },
+
+      showNotification: (message, type) => {
+        set({ notification: { message, type, visible: true } })
+        setTimeout(() => {
+          const s = get()
+          if (s.notification.message === message) {
+            set({ notification: { ...s.notification, visible: false } })
+          }
+        }, 2500)
+      },
+
+      hideNotification: () => {
+        set(s => ({ notification: { ...s.notification, visible: false } }))
+      },
+
+      isMineReachable: (mineId) => {
+        const s = get()
+        const path = findPath(mineId, s.tracks, s.basePosition, s.mineNodes)
+        return path !== null && path.length > 0
       },
 
       resetGame: () => {

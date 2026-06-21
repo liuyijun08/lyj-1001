@@ -90,6 +90,7 @@ export interface GameState {
   showSettlement: boolean
   lastSettlementDay: number
   dailyCollected: Record<MineralType, number>
+  notification: { message: string; type: "success" | "error" | "info"; visible: boolean }
 }
 
 export const MINERAL_COLORS: Record<MineralType, string> = {
