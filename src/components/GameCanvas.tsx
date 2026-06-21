@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react"
+import { useRef, useEffect, useCallback, useState } from "react"
 import { useGameStore } from "@/store/gameStore"
 import { MINERAL_COLORS } from "@/types/game"
 import { MAP_WIDTH, MAP_HEIGHT, NODE_RADIUS, BASE_RADIUS, CART_SIZE } from "@/config/gameConfig"
@@ -29,8 +29,11 @@ export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animRef = useRef<number>(0)
   const lastTimeRef = useRef<number>(0)
+  const [dragHoverMineId, setDragHoverMineId] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   const store = useGameStore()
+  const trackBuildMode = useGameStore(s => s.trackBuildMode)
 
   const render = useCallback(() => {
     const canvas = canvasRef.current
@@ -128,8 +131,19 @@ export default function GameCanvas() {
       const color = MINERAL_COLORS[mine.mineralType]
       const isSelected = state.selectedNodeId === mine.id
       const isTrackStart = state.trackStartId === mine.id
+      const isDragHover = dragHoverMineId === mine.id
 
-      if (isSelected || isTrackStart) {
+      if (isDragHover) {
+        const pulse = Math.sin(Date.now() / 120) * 0.5 + 0.5
+        ctx.beginPath()
+        ctx.arc(mine.x, mine.y, NODE_RADIUS + 12, 0, Math.PI * 2)
+        ctx.strokeStyle = "#00ff88"
+        ctx.lineWidth = 3
+        ctx.shadowColor = "#00ff88"
+        ctx.shadowBlur = 16 + pulse * 10
+        ctx.stroke()
+        ctx.shadowBlur = 0
+      } else if (isSelected || isTrackStart) {
         ctx.beginPath()
         ctx.arc(mine.x, mine.y, NODE_RADIUS + 8, 0, Math.PI * 2)
         ctx.strokeStyle = isTrackStart ? "#00d4ff" : "rgba(255, 255, 255, 0.5)"
@@ -282,6 +296,60 @@ export default function GameCanvas() {
         20
       )
     }
+  }, [dragHoverMineId, isDragging])
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLCanvasElement>) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "move"
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = MAP_WIDTH / rect.width
+    const scaleY = MAP_HEIGHT / rect.height
+    const mx = (e.clientX - rect.left) * scaleX
+    const my = (e.clientY - rect.top) * scaleY
+
+    const state = useGameStore.getState()
+    let hoverId: string | null = null
+    for (const mine of state.mineNodes) {
+      const dist = Math.sqrt((mx - mine.x) ** 2 + (my - mine.y) ** 2)
+      if (dist <= NODE_RADIUS + 10) {
+        hoverId = mine.id
+        break
+      }
+    }
+    setDragHoverMineId(hoverId)
+    setIsDragging(true)
+  }, [])
+
+  const handleDragLeave = useCallback(() => {
+    setDragHoverMineId(null)
+    setIsDragging(false)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLCanvasElement>) => {
+    e.preventDefault()
+    const cartId = e.dataTransfer.getData("text/plain")
+    setDragHoverMineId(null)
+    setIsDragging(false)
+    if (!cartId) return
+
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = MAP_WIDTH / rect.width
+    const scaleY = MAP_HEIGHT / rect.height
+    const mx = (e.clientX - rect.left) * scaleX
+    const my = (e.clientY - rect.top) * scaleY
+
+    const state = useGameStore.getState()
+    for (const mine of state.mineNodes) {
+      const dist = Math.sqrt((mx - mine.x) ** 2 + (my - mine.y) ** 2)
+      if (dist <= NODE_RADIUS + 10) {
+        state.assignCartToMine(cartId, mine.id)
+        break
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -357,7 +425,10 @@ export default function GameCanvas() {
       width={MAP_WIDTH}
       height={MAP_HEIGHT}
       onClick={handleCanvasClick}
-      className="w-full h-full cursor-crosshair"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`w-full h-full ${trackBuildMode ? "cursor-crosshair" : isDragging ? "cursor-copy" : "cursor-crosshair"}`}
       style={{ imageRendering: "auto" }}
     />
   )

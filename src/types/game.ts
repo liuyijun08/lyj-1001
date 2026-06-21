@@ -89,6 +89,7 @@ export interface GameState {
   conflicts: ConflictInfo[]
   showSettlement: boolean
   lastSettlementDay: number
+  dailyCollected: Record<MineralType, number>
 }
 
 export const MINERAL_COLORS: Record<MineralType, string> = {

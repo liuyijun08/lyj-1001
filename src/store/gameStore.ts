@@ -86,6 +86,7 @@ const initialState = {
   conflicts: [] as ConflictInfo[],
   showSettlement: false,
   lastSettlementDay: 0,
+  dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 } as Record<MineralType, number>,
 }
 
 export const useGameStore = create<GameState & GameActions>()(
@@ -225,7 +226,7 @@ export const useGameStore = create<GameState & GameActions>()(
 
       tick: (dt) => {
         const state = get()
-        if (state.isPaused) return
+        if (state.isPaused || state.showSettlement) return
 
         const speed = state.gameSpeed
         const effectiveDt = dt * speed
@@ -236,10 +237,13 @@ export const useGameStore = create<GameState & GameActions>()(
         let newCarts = state.carts.map(c => ({ ...c }))
         let newMines = state.mineNodes.map(m => ({ ...m }))
         let newConflicts: ConflictInfo[] = []
-        let showSettlement = false
+        let showSettlement = state.showSettlement || newDayProgress >= DAY_DURATION
+        let newIsPaused = showSettlement && !state.showSettlement
+        const dailyCollectedAcc: Record<MineralType, number> = { ...state.dailyCollected }
 
         if (newDayProgress >= DAY_DURATION) {
           showSettlement = true
+          newIsPaused = true
         }
 
         for (let i = 0; i < newCarts.length; i++) {
@@ -391,7 +395,10 @@ export const useGameStore = create<GameState & GameActions>()(
             if (cart.miningProgress >= UNLOAD_TIME) {
               if (cart.currentMineral && cart.currentLoad > 0) {
                 const mineral = cart.currentMineral as MineralType
-                newResources[mineral] = (newResources[mineral] || 0) + Math.round(cart.currentLoad)
+                const amount = Math.round(cart.currentLoad)
+                newResources[mineral] = (newResources[mineral] || 0) + amount
+                if (!dailyCollectedAcc[mineral]) dailyCollectedAcc[mineral] = 0
+                dailyCollectedAcc[mineral] += amount
               }
               cart.currentLoad = 0
               cart.currentMineral = null
@@ -448,20 +455,25 @@ export const useGameStore = create<GameState & GameActions>()(
           mineNodes: newMines,
           conflicts: newConflicts,
           showSettlement,
+          dailyCollected: dailyCollectedAcc,
+          isPaused: newIsPaused || state.isPaused,
         })
       },
 
       endDay: () => {
         const state = get()
 
-        const collected: Record<MineralType, number> = { he3: 0, titanium: 0, iron: 0, silicon: 0 }
+        const collected = { ...state.dailyCollected }
         let income = 0
+        for (const mineral of Object.keys(collected) as MineralType[]) {
+          income += collected[mineral] * MINERAL_PRICES[mineral]
+        }
         const trackMaintenance = state.tracks.reduce((sum, t) => sum + t.length * TRACK_MAINTENANCE_PER_UNIT, 0)
         const cartMaintenance = state.carts.length * CART_MAINTENANCE
         const expense = Math.round(trackMaintenance + cartMaintenance)
 
         const newResources = { ...state.resources }
-        newResources.credits -= expense
+        newResources.credits = newResources.credits + income - expense
 
         const dayLog: DayLog = {
           day: state.day,
@@ -492,6 +504,7 @@ export const useGameStore = create<GameState & GameActions>()(
           showSettlement: false,
           isPaused: true,
           conflicts: [],
+          dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
         }))
       },
 
@@ -516,6 +529,7 @@ export const useGameStore = create<GameState & GameActions>()(
           tracks: [],
           carts: INITIAL_CARTS.map(c => ({ ...c })),
           mineNodes: INITIAL_MINES.map(m => ({ ...m })),
+          dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
         })
       },
     }),
@@ -532,6 +546,7 @@ export const useGameStore = create<GameState & GameActions>()(
         dayLogs: state.dayLogs,
         gameSpeed: state.gameSpeed,
         lastSettlementDay: state.lastSettlementDay,
+        dailyCollected: state.dailyCollected,
       }),
     }
   )

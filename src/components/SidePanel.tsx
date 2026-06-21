@@ -147,15 +147,26 @@ export default function SidePanel() {
             const batteryRatio = cart.currentBattery / cart.maxBattery
             const loadRatio = cart.maxLoad > 0 ? cart.currentLoad / cart.maxLoad : 0
             const isConflicting = conflicts.some(c => c.cartId1 === cart.id || c.cartId2 === cart.id)
+            const isDraggable = cart.status === "idle"
 
             return (
               <div
                 key={cart.id}
-                className={`rounded-lg p-2.5 border transition-all ${
+                draggable={isDraggable}
+                onDragStart={(e) => {
+                  if (!isDraggable) { e.preventDefault(); return }
+                  e.dataTransfer.setData("text/plain", cart.id)
+                  e.dataTransfer.effectAllowed = "move"
+                  useGameStore.getState().selectCart(cart.id)
+                }}
+                onDragEnd={() => {}}
+                onClick={() => useGameStore.getState().selectCart(cart.id)}
+                className={`rounded-lg p-2.5 border transition-all select-none ${
                   isSelected
                     ? "bg-[#00d4ff0a] border-[#00d4ff44]"
                     : "bg-[#0a0e1a] border-[#1a2540]"
-                }`}
+                } ${isDraggable ? "cursor-grab active:cursor-grabbing hover:border-[#00d4ff33]" : "cursor-pointer"}`}
+                title={isDraggable ? "拖拽到地图上的矿点分配路线" : undefined}
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[#d4cfc4] text-xs font-bold">{cart.name}</span>
@@ -262,43 +273,6 @@ export default function SidePanel() {
           </p>
         </div>
       )}
-
-      <div className="p-3 border-t border-[#1a2540] bg-[#0a0e1a]">
-        <p className="text-[10px] text-[#4a5a7a] mb-2">快速测试（开发用）</p>
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            onClick={() => {
-              const store = useGameStore.getState()
-              if (store.trackBuildMode) store.toggleTrackBuild()
-              store.setTrackStart(null)
-              store.selectNode(null)
-              store.buildTrack("base", "mine-6")
-            }}
-            className="text-[10px] px-2 py-1 rounded bg-[#00d4ff22] border border-[#00d4ff44] text-[#00d4ff] hover:bg-[#00d4ff33]"
-          >
-            铺基地→坑洞洼地
-          </button>
-          <button
-            onClick={() => {
-              const store = useGameStore.getState()
-              const idleCart = store.carts.find(c => c.status === "idle")
-              if (idleCart) store.assignCartToMine(idleCart.id, "mine-6")
-            }}
-            className="text-[10px] px-2 py-1 rounded bg-[#ff8c0022] border border-[#ff8c0044] text-[#ff8c00] hover:bg-[#ff8c0033]"
-          >
-            派车→坑洞洼地
-          </button>
-          <button
-            onClick={() => {
-              const store = useGameStore.getState()
-              if (store.isPaused) store.togglePause()
-            }}
-            className="text-[10px] px-2 py-1 rounded bg-[#00ff8822] border border-[#00ff8844] text-[#00ff88] hover:bg-[#00ff8833]"
-          >
-            开始运行
-          </button>
-        </div>
-      </div>
     </div>
   )
 }
