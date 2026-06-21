@@ -1,4 +1,4 @@
-import type { MineNode, Cart, Resources } from "@/types/game"
+import type { MineNode, Cart, Resources, RepairVehicle } from "@/types/game"
 
 export const MAP_WIDTH = 900
 export const MAP_HEIGHT = 600
@@ -66,3 +66,35 @@ export const INITIAL_CARTS: Cart[] = [
 
 export const NEW_CART_COST = 200
 export const SUPPLY_PLAN_COST = 150
+
+export const METEOR_PROBABILITY_PER_DAY = 0.25
+export const METEOR_COOLDOWN_DAYS = 2
+export const REPAIR_VEHICLE_SPEED = 50
+export const REPAIR_DURATION_PER_LENGTH = 0.15
+export const NEW_REPAIR_VEHICLE_COST = 300
+export const INITIAL_REPAIR_VEHICLE_COUNT = 1
+
+export function createInitialRepairVehicles(): RepairVehicle[] {
+  const vehicles: RepairVehicle[] = []
+  for (let i = 0; i < INITIAL_REPAIR_VEHICLE_COUNT; i++) {
+    vehicles.push({
+      id: `repair-${i + 1}`,
+      name: `维修车-${i + 1}`,
+      status: "idle",
+      currentTrackId: null,
+      targetTrackId: null,
+      x: BASE_POSITION.x,
+      y: BASE_POSITION.y,
+      speed: REPAIR_VEHICLE_SPEED,
+      repairProgress: 0,
+      repairDuration: 0,
+      travelProgress: 0,
+      travelFromX: BASE_POSITION.x,
+      travelFromY: BASE_POSITION.y,
+      travelToX: BASE_POSITION.x,
+      travelToY: BASE_POSITION.y,
+      travelDistance: 0,
+    })
+  }
+  return vehicles
+}

@@ -86,8 +86,24 @@ export default function GameCanvas() {
       if (!from || !to) continue
 
       const isConflict = state.conflicts.some(c => c.trackId === track.id)
+      const isBroken = track.status === "broken"
+      const isRepairing = track.status === "repairing"
 
-      if (isConflict) {
+      if (isBroken) {
+        const pulse = Math.sin(Date.now() / 150) * 0.5 + 0.5
+        ctx.strokeStyle = `rgba(255, 80, 80, ${0.4 + pulse * 0.4})`
+        ctx.lineWidth = 5
+        ctx.shadowColor = "#ff5050"
+        ctx.shadowBlur = 14
+        ctx.setLineDash([12, 8])
+      } else if (isRepairing) {
+        const pulse = Math.sin(Date.now() / 250) * 0.5 + 0.5
+        ctx.strokeStyle = `rgba(255, 180, 50, ${0.5 + pulse * 0.3})`
+        ctx.lineWidth = 4
+        ctx.shadowColor = "#ffb432"
+        ctx.shadowBlur = 10
+        ctx.setLineDash([8, 4])
+      } else if (isConflict) {
         const pulse = Math.sin(Date.now() / 200) * 0.5 + 0.5
         ctx.strokeStyle = `rgba(255, 60, 60, ${0.5 + pulse * 0.5})`
         ctx.lineWidth = 4
@@ -104,14 +120,35 @@ export default function GameCanvas() {
       ctx.moveTo(from.x, from.y)
       ctx.lineTo(to.x, to.y)
       ctx.stroke()
+      ctx.setLineDash([])
       ctx.shadowBlur = 0
 
       const midX = (from.x + to.x) / 2
       const midY = (from.y + to.y) / 2
-      ctx.fillStyle = "rgba(150, 170, 190, 0.7)"
-      ctx.font = "10px Orbitron, monospace"
-      ctx.textAlign = "center"
-      ctx.fillText(`${track.length}m`, midX, midY - 8)
+
+      if (isBroken) {
+        ctx.fillStyle = "#ff5050"
+        ctx.font = "bold 10px 'Noto Sans SC', sans-serif"
+        ctx.textAlign = "center"
+        ctx.fillText("⚠ 断轨", midX, midY - 10)
+      } else if (isRepairing && track.repairDuration && track.repairDuration > 0) {
+        const repairPct = Math.min(1, (track.repairProgress || 0) / track.repairDuration)
+        const barW = 40
+        const barH = 4
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)"
+        ctx.fillRect(midX - barW / 2, midY - 12, barW, barH)
+        ctx.fillStyle = "#ffb432"
+        ctx.fillRect(midX - barW / 2, midY - 12, barW * repairPct, barH)
+        ctx.fillStyle = "#ffb432"
+        ctx.font = "9px 'Noto Sans SC', sans-serif"
+        ctx.textAlign = "center"
+        ctx.fillText(`维修中 ${Math.round(repairPct * 100)}%`, midX, midY - 16)
+      } else {
+        ctx.fillStyle = "rgba(150, 170, 190, 0.7)"
+        ctx.font = "10px Orbitron, monospace"
+        ctx.textAlign = "center"
+        ctx.fillText(`${track.length}m`, midX, midY - 8)
+      }
     }
 
     if (state.trackBuildMode && state.trackStartId) {
@@ -322,6 +359,58 @@ export default function GameCanvas() {
         ctx.lineWidth = 1.5
         ctx.setLineDash([3, 3])
         ctx.strokeRect(cart.x - halfSize - 4, cart.y - halfSize - 8, CART_SIZE + 8, CART_SIZE + 14)
+        ctx.setLineDash([])
+      }
+    }
+
+    for (const rv of state.repairVehicles) {
+      if (rv.status === "idle") {
+        const rvIdx = state.repairVehicles.indexOf(rv)
+        const offsetX = (rvIdx % 2) * 24 - 12
+        const offsetY = BASE_RADIUS + 56 + Math.floor(rvIdx / 2) * 20
+        rv.x = bx + offsetX
+        rv.y = by + offsetY
+      }
+
+      const color = "#ffb432"
+      const rvHalfSize = 8
+
+      ctx.fillStyle = color
+      ctx.shadowColor = color
+      ctx.shadowBlur = 8
+      ctx.beginPath()
+      ctx.roundRect(rv.x - rvHalfSize, rv.y - rvHalfSize, rvHalfSize * 2, rvHalfSize * 2, 2)
+      ctx.fill()
+      ctx.shadowBlur = 0
+
+      ctx.strokeStyle = "#ffd98a"
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.roundRect(rv.x - rvHalfSize, rv.y - rvHalfSize, rvHalfSize * 2, rvHalfSize * 2, 2)
+      ctx.stroke()
+
+      ctx.fillStyle = "#0a0e1a"
+      ctx.font = "bold 9px Orbitron, monospace"
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
+      ctx.fillText("R", rv.x, rv.y)
+      ctx.textBaseline = "alphabetic"
+
+      if (rv.status === "repairing" && rv.repairDuration > 0) {
+        const pct = Math.min(1, rv.repairProgress / rv.repairDuration)
+        const barW = 24
+        const barH = 3
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)"
+        ctx.fillRect(rv.x - barW / 2, rv.y - rvHalfSize - 7, barW, barH)
+        ctx.fillStyle = "#ffb432"
+        ctx.fillRect(rv.x - barW / 2, rv.y - rvHalfSize - 7, barW * pct, barH)
+      }
+
+      if (state.selectedRepairVehicleId === rv.id) {
+        ctx.strokeStyle = "#00d4ff"
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([3, 3])
+        ctx.strokeRect(rv.x - rvHalfSize - 4, rv.y - rvHalfSize - 4, rvHalfSize * 2 + 8, rvHalfSize * 2 + 8)
         ctx.setLineDash([])
       }
     }
@@ -614,11 +703,60 @@ export default function GameCanvas() {
         const dist = Math.sqrt((mx - cart.x) ** 2 + (my - cart.y) ** 2)
         if (dist <= CART_SIZE + 5) {
           state.selectCart(cart.id)
+          state.selectRepairVehicle(null)
           return
         }
       }
+
+      for (const rv of state.repairVehicles) {
+        const dist = Math.sqrt((mx - rv.x) ** 2 + (my - rv.y) ** 2)
+        if (dist <= 14) {
+          state.selectRepairVehicle(rv.id)
+          state.selectCart(null)
+          state.selectNode(null)
+          return
+        }
+      }
+
+      const allTrackNodes = [
+        { id: "base", x: state.basePosition.x, y: state.basePosition.y },
+        ...state.mineNodes,
+      ]
+      for (const track of state.tracks) {
+        if (track.status !== "broken") continue
+        const from = allTrackNodes.find(n => n.id === track.fromId)
+        const to = allTrackNodes.find(n => n.id === track.toId)
+        if (!from || !to) continue
+        const A = mx - from.x
+        const B = my - from.y
+        const C = to.x - from.x
+        const D = to.y - from.y
+        const dot = A * C + B * D
+        const lenSq = C * C + D * D
+        let param = lenSq !== 0 ? dot / lenSq : -1
+        param = Math.max(0, Math.min(1, param))
+        const xx = from.x + param * C
+        const yy = from.y + param * D
+        const distToTrack = Math.sqrt((mx - xx) ** 2 + (my - yy) ** 2)
+        if (distToTrack <= 15) {
+          const selectedRV = state.repairVehicles.find(r => r.id === state.selectedRepairVehicleId)
+          if (selectedRV && selectedRV.status === "idle") {
+            state.dispatchRepairVehicle(selectedRV.id, track.id)
+          } else {
+            const idleRV = state.repairVehicles.find(r => r.status === "idle")
+            if (idleRV) {
+              state.dispatchRepairVehicle(idleRV.id, track.id)
+            } else {
+              state.showNotification("没有可用的维修车，请购买或等待", "error")
+            }
+          }
+          return
+        }
+      }
+
       state.selectNode(null)
       state.selectCart(null)
+      state.selectRepairVehicle(null)
     }
   }, [draggingCartId])
 

@@ -1,13 +1,14 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail, LevelState, LevelResult, LevelProgress, AppView } from "@/types/game"
+import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail, LevelState, LevelResult, LevelProgress, AppView, RepairVehicle, AccidentRecord } from "@/types/game"
 import { MINERAL_PRICES } from "@/types/game"
 import {
   INITIAL_RESOURCES, INITIAL_MINES, INITIAL_CARTS, BASE_POSITION,
   DAY_DURATION, MINING_SPEED, MINING_TIME, UNLOAD_TIME, CHARGE_TIME,
   CHARGE_COST, TRACK_COST_PER_UNIT, TRACK_MAINTENANCE_PER_UNIT,
   CART_MAINTENANCE, BASE_CHARGE_RATE, MAP_WIDTH, MAP_HEIGHT, NEW_CART_COST,
-  SUPPLY_PLAN_COST,
+  SUPPLY_PLAN_COST, METEOR_PROBABILITY_PER_DAY, METEOR_COOLDOWN_DAYS,
+  REPAIR_DURATION_PER_LENGTH, NEW_REPAIR_VEHICLE_COST, createInitialRepairVehicles,
 } from "@/config/gameConfig"
 import { LEVELS, getLevelById } from "@/config/levels"
 
@@ -20,6 +21,7 @@ function findPath(mineId: string, tracks: Track[], basePosition: { x: number; y:
   const baseId = "base"
 
   for (const t of tracks) {
+    if (t.status === "broken") continue
     if (!adj[t.fromId]) adj[t.fromId] = []
     if (!adj[t.toId]) adj[t.toId] = []
     adj[t.fromId].push({ track: t, neighbor: t.toId })
@@ -84,6 +86,10 @@ interface GameActions {
   closeLevelComplete: () => void
   setInLevelMode: (mode: boolean) => void
   setView: (view: AppView) => void
+  dispatchRepairVehicle: (vehicleId: string, trackId: string) => void
+  buyRepairVehicle: () => void
+  selectRepairVehicle: (vehicleId: string | null) => void
+  triggerMeteorShower: () => void
 }
 
 function initLevelResults(): Record<number, LevelResult> {
@@ -134,6 +140,10 @@ const initialState = {
   totalMiningIncome: 0,
   inLevelMode: false,
   currentView: "menu" as AppView,
+  accidents: [] as AccidentRecord[],
+  repairVehicles: createInitialRepairVehicles(),
+  selectedRepairVehicleId: null as string | null,
+  meteorCooldown: 0,
 }
 
 export const useGameStore = create<GameState & GameActions>()(
@@ -184,6 +194,9 @@ export const useGameStore = create<GameState & GameActions>()(
           toId,
           length: Math.round(length),
           buildCost,
+          status: "normal",
+          repairVehicleId: null,
+          repairProgress: 0,
         }
 
         set(s => ({
@@ -314,13 +327,51 @@ export const useGameStore = create<GameState & GameActions>()(
         let newResources = { ...state.resources }
         let newCarts = state.carts.map(c => ({ ...c }))
         let newMines = state.mineNodes.map(m => ({ ...m }))
+        let newTracks = state.tracks.map(t => ({ ...t }))
+        let newAccidents = state.accidents.map(a => ({ ...a }))
+        let newRepairVehicles = state.repairVehicles.map(rv => ({ ...rv }))
         let showSettlement = state.showSettlement || newDayProgress >= DAY_DURATION
         let newIsPaused = showSettlement && !state.showSettlement
         const dailyCollectedAcc: Record<MineralType, number> = { ...state.dailyCollected }
+        let newMeteorCooldown = Math.max(0, state.meteorCooldown - effectiveDt / DAY_DURATION)
 
         if (newDayProgress >= DAY_DURATION) {
           showSettlement = true
           newIsPaused = true
+        }
+
+        const currentTimeInDay = newDayProgress % DAY_DURATION
+        if (newMeteorCooldown <= 0 && !showSettlement) {
+          const meteorChance = METEOR_PROBABILITY_PER_DAY * effectiveDt / DAY_DURATION
+          if (Math.random() < meteorChance && newTracks.length > 0) {
+            const normalTracks = newTracks.filter(t => t.status === "normal")
+            if (normalTracks.length > 0) {
+              const hitTrack = normalTracks[Math.floor(Math.random() * normalTracks.length)]
+              const hitTrackIdx = newTracks.findIndex(t => t.id === hitTrack.id)
+              if (hitTrackIdx >= 0) {
+                newTracks[hitTrackIdx] = {
+                  ...newTracks[hitTrackIdx],
+                  status: "broken",
+                  breakDay: newDay,
+                  breakTime: currentTimeInDay,
+                  repairVehicleId: null,
+                  repairProgress: 0,
+                }
+                const accident: AccidentRecord = {
+                  id: genId("accident"),
+                  day: newDay,
+                  time: currentTimeInDay,
+                  type: "meteor",
+                  trackId: hitTrack.id,
+                  description: `陨石雨袭击了轨道段（${hitTrack.length}米），轨道损毁！`,
+                  resolved: false,
+                }
+                newAccidents.push(accident)
+                newMeteorCooldown = METEOR_COOLDOWN_DAYS
+                get().showNotification(`⚠️ 陨石雨警报！一段轨道损毁，请派遣维修车`, "error")
+              }
+            }
+          }
         }
 
         for (let i = 0; i < newCarts.length; i++) {
@@ -339,9 +390,23 @@ export const useGameStore = create<GameState & GameActions>()(
             continue
           }
 
+          const allNodes = [
+            { id: "base", x: state.basePosition.x, y: state.basePosition.y },
+            ...newMines,
+          ]
+
           if (cart.status === "toMine") {
-            const track = state.tracks.find(t => t.id === cart.currentTrackId)
+            const track = newTracks.find(t => t.id === cart.currentTrackId)
             if (!track) continue
+
+            if (track.status === "broken") {
+              if (!cart.isPaused) {
+                cart.isPaused = true
+                cart.pauseRemaining = 9999
+                get().showNotification(`${cart.name} 前方轨道损毁，紧急停运！`, "error")
+              }
+              continue
+            }
 
             const progressDelta = (cart.speed * effectiveDt) / track.length
             cart.trackProgress += progressDelta
@@ -350,10 +415,6 @@ export const useGameStore = create<GameState & GameActions>()(
             const fromId = cart.direction === "forward" ? track.fromId : track.toId
             const toId = cart.direction === "forward" ? track.toId : track.fromId
 
-            const allNodes = [
-              { id: "base", x: state.basePosition.x, y: state.basePosition.y },
-              ...state.mineNodes,
-            ]
             const fromNode = allNodes.find(n => n.id === fromId)
             const toNode = allNodes.find(n => n.id === toId)
             if (fromNode && toNode) {
@@ -368,8 +429,16 @@ export const useGameStore = create<GameState & GameActions>()(
 
               const currentIdx = route.trackIds.indexOf(cart.currentTrackId!)
               if (currentIdx < route.trackIds.length - 1) {
-                cart.currentTrackId = route.trackIds[currentIdx + 1]
-                cart.trackProgress = 0
+                const nextTrackId = route.trackIds[currentIdx + 1]
+                const nextTrack = newTracks.find(t => t.id === nextTrackId)
+                if (nextTrack && nextTrack.status === "broken") {
+                  cart.isPaused = true
+                  cart.pauseRemaining = 9999
+                  get().showNotification(`${cart.name} 前方轨道损毁，紧急停运！`, "error")
+                } else {
+                  cart.currentTrackId = nextTrackId
+                  cart.trackProgress = 0
+                }
               } else {
                 cart.status = "mining"
                 cart.miningProgress = 0
@@ -416,7 +485,7 @@ export const useGameStore = create<GameState & GameActions>()(
           }
 
           else if (cart.status === "toBase") {
-            const track = state.tracks.find(t => t.id === cart.currentTrackId)
+            const track = newTracks.find(t => t.id === cart.currentTrackId)
             if (!track) {
               const route = state.routes.find(r => r.id === cart.routeId)
               if (route && route.trackIds.length > 0) {
@@ -431,6 +500,15 @@ export const useGameStore = create<GameState & GameActions>()(
               continue
             }
 
+            if (track.status === "broken") {
+              if (!cart.isPaused) {
+                cart.isPaused = true
+                cart.pauseRemaining = 9999
+                get().showNotification(`${cart.name} 前方轨道损毁，紧急停运！`, "error")
+              }
+              continue
+            }
+
             const progressDelta = (cart.speed * effectiveDt) / track.length
             cart.trackProgress += progressDelta
             cart.currentBattery -= cart.batteryPerUnit * (cart.speed * effectiveDt) * 0.5
@@ -438,10 +516,6 @@ export const useGameStore = create<GameState & GameActions>()(
             const fromId = cart.direction === "backward" ? track.toId : track.fromId
             const toId = cart.direction === "backward" ? track.fromId : track.toId
 
-            const allNodes = [
-              { id: "base", x: state.basePosition.x, y: state.basePosition.y },
-              ...state.mineNodes,
-            ]
             const fromNode = allNodes.find(n => n.id === fromId)
             const toNode = allNodes.find(n => n.id === toId)
             if (fromNode && toNode) {
@@ -473,8 +547,16 @@ export const useGameStore = create<GameState & GameActions>()(
               } else {
                 const nextIdx = cart.direction === "backward" ? currentIdx - 1 : currentIdx + 1
                 if (nextIdx >= 0 && nextIdx < route.trackIds.length) {
-                  cart.currentTrackId = route.trackIds[nextIdx]
-                  cart.trackProgress = 0
+                  const nextTrackId = route.trackIds[nextIdx]
+                  const nextTrack = newTracks.find(t => t.id === nextTrackId)
+                  if (nextTrack && nextTrack.status === "broken") {
+                    cart.isPaused = true
+                    cart.pauseRemaining = 9999
+                    get().showNotification(`${cart.name} 前方轨道损毁，紧急停运！`, "error")
+                  } else {
+                    cart.currentTrackId = nextTrackId
+                    cart.trackProgress = 0
+                  }
                 }
               }
             }
@@ -518,6 +600,110 @@ export const useGameStore = create<GameState & GameActions>()(
           }
 
           cart.currentBattery = Math.max(0, cart.currentBattery)
+        }
+
+        for (let rvIdx = 0; rvIdx < newRepairVehicles.length; rvIdx++) {
+          const rv = newRepairVehicles[rvIdx]
+
+          if (rv.status === "traveling") {
+            if (rv.travelDistance > 0) {
+              rv.travelProgress += (rv.speed * effectiveDt) / rv.travelDistance
+            }
+            if (rv.travelProgress >= 1) {
+              rv.travelProgress = 1
+              rv.x = rv.travelToX
+              rv.y = rv.travelToY
+              rv.status = "repairing"
+              rv.repairProgress = 0
+              const trackIdx = newTracks.findIndex(t => t.id === rv.targetTrackId)
+              if (trackIdx >= 0) {
+                const track = newTracks[trackIdx]
+                newTracks[trackIdx] = {
+                  ...track,
+                  status: "repairing",
+                  repairVehicleId: rv.id,
+                  repairProgress: 0,
+                  repairDuration: track.length * REPAIR_DURATION_PER_LENGTH,
+                }
+                rv.repairDuration = track.length * REPAIR_DURATION_PER_LENGTH
+                rv.currentTrackId = track.id
+              }
+            } else {
+              rv.x = rv.travelFromX + (rv.travelToX - rv.travelFromX) * rv.travelProgress
+              rv.y = rv.travelFromY + (rv.travelToY - rv.travelFromY) * rv.travelProgress
+            }
+          }
+
+          else if (rv.status === "repairing") {
+            rv.repairProgress += effectiveDt
+            const trackIdx = newTracks.findIndex(t => t.id === rv.currentTrackId)
+            if (trackIdx >= 0) {
+              newTracks[trackIdx] = {
+                ...newTracks[trackIdx],
+                repairProgress: rv.repairProgress,
+              }
+            }
+            if (rv.repairProgress >= rv.repairDuration) {
+              rv.status = "returning"
+              rv.travelFromX = rv.x
+              rv.travelFromY = rv.y
+              rv.travelToX = state.basePosition.x
+              rv.travelToY = state.basePosition.y
+              rv.travelDistance = calcDistance(rv.travelFromX, rv.travelFromY, rv.travelToX, rv.travelToY)
+              rv.travelProgress = 0
+              if (trackIdx >= 0) {
+                newTracks[trackIdx] = {
+                  ...newTracks[trackIdx],
+                  status: "normal",
+                  repairVehicleId: null,
+                  repairProgress: 0,
+                  repairDuration: undefined,
+                }
+              }
+              const accIdx = newAccidents.findIndex(a => a.trackId === rv.currentTrackId && !a.resolved)
+              if (accIdx >= 0) {
+                newAccidents[accIdx] = {
+                  ...newAccidents[accIdx],
+                  resolved: true,
+                  resolvedDay: newDay,
+                  resolvedTime: currentTimeInDay,
+                }
+              }
+              for (let ci = 0; ci < newCarts.length; ci++) {
+                const c = newCarts[ci]
+                if (c.isPaused && c.pauseRemaining > 1000) {
+                  const route = state.routes.find(r => r.id === c.routeId)
+                  if (route) {
+                    const stillBlocked = route.trackIds.some(tid => {
+                      const t = newTracks.find(tr => tr.id === tid)
+                      return t && t.status === "broken"
+                    })
+                    if (!stillBlocked) {
+                      newCarts[ci] = { ...c, isPaused: false, pauseRemaining: 0 }
+                    }
+                  }
+                }
+              }
+              get().showNotification(`✅ 轨道修复完成，运输已恢复`, "success")
+              rv.currentTrackId = null
+              rv.targetTrackId = null
+            }
+          }
+
+          else if (rv.status === "returning") {
+            if (rv.travelDistance > 0) {
+              rv.travelProgress += (rv.speed * effectiveDt) / rv.travelDistance
+            }
+            if (rv.travelProgress >= 1) {
+              rv.travelProgress = 1
+              rv.x = state.basePosition.x
+              rv.y = state.basePosition.y
+              rv.status = "idle"
+            } else {
+              rv.x = rv.travelFromX + (rv.travelToX - rv.travelFromX) * rv.travelProgress
+              rv.y = rv.travelFromY + (rv.travelToY - rv.travelFromY) * rv.travelProgress
+            }
+          }
         }
 
         const trackCartMap: Record<string, string[]> = {}
@@ -567,11 +753,15 @@ export const useGameStore = create<GameState & GameActions>()(
           resources: newResources,
           carts: newCarts,
           mineNodes: newMines,
+          tracks: newTracks,
           conflicts: newConflicts,
           showSettlement,
           dailyCollected: dailyCollectedAcc,
           isPaused: newIsPaused || state.isPaused,
           totalCollected: newTotalCollected,
+          accidents: newAccidents,
+          repairVehicles: newRepairVehicles,
+          meteorCooldown: newMeteorCooldown,
         })
       },
 
@@ -884,6 +1074,10 @@ export const useGameStore = create<GameState & GameActions>()(
           dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
           currentView: "game",
           inLevelMode: false,
+          accidents: [],
+          repairVehicles: createInitialRepairVehicles(),
+          selectedRepairVehicleId: null,
+          meteorCooldown: 0,
         })
       },
 
@@ -1009,6 +1203,10 @@ export const useGameStore = create<GameState & GameActions>()(
             showLevelComplete: false,
             completedStars: 0,
           },
+          accidents: [],
+          repairVehicles: createInitialRepairVehicles(),
+          selectedRepairVehicleId: null,
+          meteorCooldown: 0,
         })
         get().showNotification(`关卡 ${level.name} 开始！`, "success")
       },
@@ -1121,6 +1319,136 @@ export const useGameStore = create<GameState & GameActions>()(
       },
 
       closeLevelComplete: () => set(s => ({ level: { ...s.level, showLevelComplete: false } })),
+
+      selectRepairVehicle: (vehicleId) => set({ selectedRepairVehicleId: vehicleId }),
+
+      dispatchRepairVehicle: (vehicleId, trackId) => {
+        const state = get()
+        const vehicle = state.repairVehicles.find(rv => rv.id === vehicleId)
+        const track = state.tracks.find(t => t.id === trackId)
+        if (!vehicle) {
+          get().showNotification("维修车不存在", "error")
+          return
+        }
+        if (vehicle.status !== "idle") {
+          get().showNotification(`${vehicle.name} 正在执行任务`, "error")
+          return
+        }
+        if (!track) {
+          get().showNotification("轨道不存在", "error")
+          return
+        }
+        if (track.status !== "broken") {
+          get().showNotification("该轨道无需维修", "info")
+          return
+        }
+        if (track.repairVehicleId) {
+          get().showNotification("该轨道已有维修车前往", "info")
+          return
+        }
+
+        const allNodes = [
+          { id: "base", x: state.basePosition.x, y: state.basePosition.y },
+          ...state.mineNodes,
+        ]
+        const fromNode = allNodes.find(n => n.id === track.fromId)
+        const toNode = allNodes.find(n => n.id === track.toId)
+        if (!fromNode || !toNode) return
+
+        const targetX = (fromNode.x + toNode.x) / 2
+        const targetY = (fromNode.y + toNode.y) / 2
+        const distance = calcDistance(vehicle.x, vehicle.y, targetX, targetY)
+
+        set(s => ({
+          repairVehicles: s.repairVehicles.map(rv =>
+            rv.id === vehicleId
+              ? {
+                  ...rv,
+                  status: "traveling",
+                  targetTrackId: trackId,
+                  travelFromX: rv.x,
+                  travelFromY: rv.y,
+                  travelToX: targetX,
+                  travelToY: targetY,
+                  travelDistance: distance,
+                  travelProgress: 0,
+                }
+              : rv
+          ),
+          tracks: s.tracks.map(t =>
+            t.id === trackId ? { ...t, repairVehicleId: vehicleId } : t
+          ),
+        }))
+        get().showNotification(`${vehicle.name} 已派往损毁轨道`, "success")
+      },
+
+      buyRepairVehicle: () => {
+        const state = get()
+        if (state.resources.credits < NEW_REPAIR_VEHICLE_COST) {
+          get().showNotification("金币不足，无法购买维修车", "error")
+          return
+        }
+        const newIdx = state.repairVehicles.length + 1
+        const newVehicle: RepairVehicle = {
+          id: genId("repair"),
+          name: `维修车-${newIdx}`,
+          status: "idle",
+          currentTrackId: null,
+          targetTrackId: null,
+          x: state.basePosition.x,
+          y: state.basePosition.y,
+          speed: 50,
+          repairProgress: 0,
+          repairDuration: 0,
+          travelProgress: 0,
+          travelFromX: state.basePosition.x,
+          travelFromY: state.basePosition.y,
+          travelToX: state.basePosition.x,
+          travelToY: state.basePosition.y,
+          travelDistance: 0,
+        }
+        set(s => ({
+          repairVehicles: [...s.repairVehicles, newVehicle],
+          resources: { ...s.resources, credits: s.resources.credits - NEW_REPAIR_VEHICLE_COST },
+        }))
+        get().showNotification(`已购买 ${newVehicle.name}`, "success")
+      },
+
+      triggerMeteorShower: () => {
+        const state = get()
+        const normalTracks = state.tracks.filter(t => t.status === "normal")
+        if (normalTracks.length === 0) {
+          get().showNotification("没有可被损毁的轨道", "info")
+          return
+        }
+        const hitTrack = normalTracks[Math.floor(Math.random() * normalTracks.length)]
+        const accident: AccidentRecord = {
+          id: genId("accident"),
+          day: state.day,
+          time: state.dayProgress,
+          type: "meteor",
+          trackId: hitTrack.id,
+          description: `陨石雨袭击了轨道段（${hitTrack.length}米），轨道损毁！`,
+          resolved: false,
+        }
+        set(s => ({
+          tracks: s.tracks.map(t =>
+            t.id === hitTrack.id
+              ? {
+                  ...t,
+                  status: "broken",
+                  breakDay: s.day,
+                  breakTime: s.dayProgress,
+                  repairVehicleId: null,
+                  repairProgress: 0,
+                }
+              : t
+          ),
+          accidents: [...s.accidents, accident],
+          meteorCooldown: METEOR_COOLDOWN_DAYS,
+        }))
+        get().showNotification(`⚠️ 陨石雨警报！一段轨道损毁，请派遣维修车`, "error")
+      },
     }),
     {
       name: "lunar-miner-game",
@@ -1141,6 +1469,9 @@ export const useGameStore = create<GameState & GameActions>()(
         level: state.level,
         totalCollected: state.totalCollected,
         totalMiningIncome: state.totalMiningIncome,
+        accidents: state.accidents,
+        repairVehicles: state.repairVehicles,
+        meteorCooldown: state.meteorCooldown,
       }),
     }
   )

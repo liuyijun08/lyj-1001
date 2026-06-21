@@ -4,6 +4,12 @@ export type CartStatus = "idle" | "toMine" | "mining" | "toBase" | "unloading" |
 
 export type SupplyStatus = "pending" | "completed" | "cancelled"
 
+export type AccidentType = "meteor"
+
+export type TrackStatus = "normal" | "broken" | "repairing"
+
+export type RepairVehicleStatus = "idle" | "traveling" | "repairing" | "returning"
+
 export interface SupplyRecord {
   id: string
   mineId: string
@@ -49,6 +55,43 @@ export interface Track {
   toId: string
   length: number
   buildCost: number
+  status: TrackStatus
+  breakDay?: number
+  breakTime?: number
+  repairVehicleId?: string | null
+  repairProgress?: number
+  repairDuration?: number
+}
+
+export interface AccidentRecord {
+  id: string
+  day: number
+  time: number
+  type: AccidentType
+  trackId: string
+  description: string
+  resolved: boolean
+  resolvedDay?: number
+  resolvedTime?: number
+}
+
+export interface RepairVehicle {
+  id: string
+  name: string
+  status: RepairVehicleStatus
+  currentTrackId: string | null
+  targetTrackId: string | null
+  x: number
+  y: number
+  speed: number
+  repairProgress: number
+  repairDuration: number
+  travelProgress: number
+  travelFromX: number
+  travelFromY: number
+  travelToX: number
+  travelToY: number
+  travelDistance: number
 }
 
 export interface CartRoute {
@@ -140,6 +183,10 @@ export interface GameState {
   totalMiningIncome: number
   inLevelMode: boolean
   currentView: AppView
+  accidents: AccidentRecord[]
+  repairVehicles: RepairVehicle[]
+  selectedRepairVehicleId: string | null
+  meteorCooldown: number
 }
 
 export const MINERAL_COLORS: Record<MineralType, string> = {
@@ -170,6 +217,19 @@ export const CART_STATUS_LABELS: Record<CartStatus, string> = {
   toBase: "返回基地",
   unloading: "卸载中",
   charging: "充电中",
+}
+
+export const TRACK_STATUS_LABELS: Record<TrackStatus, string> = {
+  normal: "正常",
+  broken: "断轨",
+  repairing: "维修中",
+}
+
+export const REPAIR_VEHICLE_STATUS_LABELS: Record<RepairVehicleStatus, string> = {
+  idle: "待命",
+  traveling: "前往现场",
+  repairing: "维修中",
+  returning: "返回基地",
 }
 
 export type TargetType = "tracks" | "credits" | "minerals" | "minesConnected" | "days"
