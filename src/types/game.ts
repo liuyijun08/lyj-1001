@@ -28,6 +28,24 @@ export interface SupplyRecord {
   supplyAmount: number
 }
 
+export interface InventoryBatch {
+  id: string
+  mineralType: MineralType
+  amount: number
+  dayStored: number
+  timeStored: number
+}
+
+export interface DailyInventoryChange {
+  day: number
+  mineralType: MineralType
+  startAmount: number
+  added: number
+  removed: number
+  discarded: number
+  endAmount: number
+}
+
 export interface DailyRecoveryDetail {
   day: number
   mineId: string
@@ -173,6 +191,8 @@ export interface DayLog {
   supplyCancelled: SupplyRecord[]
   recoveryDetails: DailyRecoveryDetail[]
   supplyRefunds: number
+  inventoryChanges: DailyInventoryChange[]
+  discardedMinerals: Record<MineralType, number>
 }
 
 export interface ConflictInfo {
@@ -190,6 +210,9 @@ export interface GameState {
   day: number
   dayProgress: number
   resources: Resources
+  inventoryBatches: InventoryBatch[]
+  warehouseCapacity: number
+  dailyDiscarded: Record<MineralType, number>
   mineNodes: MineNode[]
   tracks: Track[]
   carts: Cart[]

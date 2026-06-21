@@ -1,4 +1,4 @@
-import type { MineNode, Cart, Resources, RepairVehicle, PowerStation } from "@/types/game"
+import type { MineNode, Cart, Resources, RepairVehicle, PowerStation, MineralType } from "@/types/game"
 
 export const MAP_WIDTH = 900
 export const MAP_HEIGHT = 600
@@ -88,6 +88,9 @@ export function createInitialPowerStations(): PowerStation[] {
 
 export const NEW_CART_COST = 200
 export const SUPPLY_PLAN_COST = 150
+
+export const WAREHOUSE_CAPACITY = 500
+export const DISCARDABLE_MINERALS: MineralType[] = ["iron", "silicon"]
 
 export const METEOR_PROBABILITY_PER_DAY = 0.25
 export const METEOR_COOLDOWN_DAYS = 2

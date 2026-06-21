@@ -1,7 +1,7 @@
 import { useGameStore } from "@/store/gameStore"
 import { MINERAL_NAMES, MINERAL_COLORS, MINERAL_PRICES, MineralType } from "@/types/game"
-import { DAY_DURATION, NEW_CART_COST, TRACK_MAINTENANCE_PER_UNIT, CART_MAINTENANCE } from "@/config/gameConfig"
-import { Zap, DollarSign, Pause, Play, FastForward, RotateCcw } from "lucide-react"
+import { DAY_DURATION, NEW_CART_COST, TRACK_MAINTENANCE_PER_UNIT, CART_MAINTENANCE, WAREHOUSE_CAPACITY } from "@/config/gameConfig"
+import { Zap, DollarSign, Pause, Play, FastForward, RotateCcw, Warehouse } from "lucide-react"
 
 const mineralTypes: MineralType[] = ["he3", "titanium", "iron", "silicon"]
 
@@ -17,6 +17,9 @@ export default function TopBar() {
   const setSpeed = useGameStore(s => s.setSpeed)
   const sellMinerals = useGameStore(s => s.sellMinerals)
   const resetGame = useGameStore(s => s.resetGame)
+  const inventoryBatches = useGameStore(s => s.inventoryBatches)
+  const warehouseCapacity = useGameStore(s => s.warehouseCapacity)
+  const getWarehouseUsage = useGameStore(s => s.getWarehouseUsage)
 
   const trackMaint = Math.round(tracks.reduce((s, t) => s + t.length * TRACK_MAINTENANCE_PER_UNIT, 0))
   const cartMaint = carts.length * CART_MAINTENANCE
@@ -51,6 +54,36 @@ export default function TopBar() {
             {Math.round(resources.credits)}
           </span>
         </div>
+
+        {(() => {
+          const usage = getWarehouseUsage()
+          const ratio = warehouseCapacity > 0 ? usage / warehouseCapacity : 0
+          const isNearFull = ratio >= 0.9
+          const isWarning = ratio >= 0.7
+          return (
+            <div
+              className="flex items-center gap-1.5 bg-[#0a0e1a] rounded-lg px-2.5 py-1.5 border"
+              style={{
+                borderColor: isNearFull ? "#ff444466" : isWarning ? "#ffb43266" : "#b88eff33",
+              }}
+              title={`仓库容量: ${Math.round(usage)}/${warehouseCapacity}`}
+            >
+              <Warehouse
+                size={12}
+                className={isNearFull ? "text-[#ff4444]" : isWarning ? "text-[#ffb432]" : "text-[#b88eff]"}
+              />
+              <span
+                className="text-xs font-medium"
+                style={{
+                  color: isNearFull ? "#ff4444" : isWarning ? "#ffb432" : "#b88eff",
+                  fontFamily: "Orbitron, monospace",
+                }}
+              >
+                {Math.round(usage)}/{warehouseCapacity}
+              </span>
+            </div>
+          )
+        })()}
 
         {mineralTypes.map(type => (
           <div

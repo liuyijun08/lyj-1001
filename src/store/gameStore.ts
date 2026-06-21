@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
-import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail, LevelState, LevelResult, LevelProgress, AppView, RepairVehicle, AccidentRecord, PowerStation, PowerCable, PoweredNode, PowerNodeType } from "@/types/game"
-import { MINERAL_PRICES } from "@/types/game"
+import type { GameState, Cart, MineNode, Track, CartRoute, ConflictInfo, MineralType, DayLog, SupplyRecord, DailyRecoveryDetail, LevelState, LevelResult, LevelProgress, AppView, RepairVehicle, AccidentRecord, PowerStation, PowerCable, PoweredNode, PowerNodeType, InventoryBatch, DailyInventoryChange } from "@/types/game"
+import { MINERAL_PRICES, MINERAL_NAMES } from "@/types/game"
 import {
   INITIAL_RESOURCES, INITIAL_MINES, INITIAL_CARTS, BASE_POSITION,
   DAY_DURATION, MINING_SPEED, MINING_TIME, UNLOAD_TIME, CHARGE_TIME,
@@ -10,7 +10,7 @@ import {
   SUPPLY_PLAN_COST, METEOR_PROBABILITY_PER_DAY, METEOR_COOLDOWN_DAYS,
   REPAIR_DURATION_PER_LENGTH, NEW_REPAIR_VEHICLE_COST, createInitialRepairVehicles,
   POWER_STATION_COST, POWER_STATION_OUTPUT, POWER_CABLE_COST_PER_UNIT, POWER_CABLE_MAINTENANCE_PER_UNIT,
-  UNPOWERED_SPEED_RATIO, createInitialPowerStations,
+  UNPOWERED_SPEED_RATIO, createInitialPowerStations, WAREHOUSE_CAPACITY,
 } from "@/config/gameConfig"
 import { LEVELS, getLevelById } from "@/config/levels"
 
@@ -149,6 +149,11 @@ interface GameActions {
   closeSettlement: () => void
   resetGame: () => void
   sellMinerals: (type: MineralType, amount: number) => void
+  discardMinerals: (type: MineralType, amount: number) => void
+  discardBatch: (batchId: string) => void
+  getWarehouseUsage: () => number
+  getWarehouseRemaining: () => number
+  getMineralAmount: (type: MineralType) => number
   showNotification: (message: string, type: "success" | "error" | "info") => void
   hideNotification: () => void
   isMineReachable: (mineId: string) => boolean
@@ -200,6 +205,9 @@ const initialState = {
   day: 1,
   dayProgress: 0,
   resources: { ...INITIAL_RESOURCES },
+  inventoryBatches: [] as InventoryBatch[],
+  warehouseCapacity: WAREHOUSE_CAPACITY,
+  dailyDiscarded: { he3: 0, titanium: 0, iron: 0, silicon: 0 } as Record<MineralType, number>,
   mineNodes: INITIAL_MINES.map(m => ({ ...m, currentSupplyId: null })),
   tracks: [] as Track[],
   carts: INITIAL_CARTS.map(c => ({ ...c })),
@@ -430,6 +438,8 @@ export const useGameStore = create<GameState & GameActions>()(
         const newDayProgress = state.dayProgress + effectiveDt
         let newDay = state.day
         let newResources = { ...state.resources }
+        let newInventoryBatches = state.inventoryBatches.map(b => ({ ...b }))
+        const warehouseCapacity = state.warehouseCapacity
         let newCarts = state.carts.map(c => ({ ...c }))
         let newMines = state.mineNodes.map(m => ({ ...m }))
         let newTracks = state.tracks.map(t => ({ ...t }))
@@ -438,7 +448,10 @@ export const useGameStore = create<GameState & GameActions>()(
         let showSettlement = state.showSettlement || newDayProgress >= DAY_DURATION
         let newIsPaused = showSettlement && !state.showSettlement
         const dailyCollectedAcc: Record<MineralType, number> = { ...state.dailyCollected }
+        const dailyDiscardedAcc: Record<MineralType, number> = { ...state.dailyDiscarded }
         let newMeteorCooldown = Math.max(0, state.meteorCooldown - effectiveDt / DAY_DURATION)
+
+        const calcCurrentUsage = () => newInventoryBatches.reduce((sum, b) => sum + b.amount, 0)
 
         for (let i = 0; i < newCarts.length; i++) {
           const cart = newCarts[i]
@@ -680,9 +693,43 @@ export const useGameStore = create<GameState & GameActions>()(
               if (cart.currentMineral && cart.currentLoad > 0) {
                 const mineral = cart.currentMineral as MineralType
                 const amount = Math.round(cart.currentLoad)
-                newResources[mineral] = (newResources[mineral] || 0) + amount
-                if (!dailyCollectedAcc[mineral]) dailyCollectedAcc[mineral] = 0
-                dailyCollectedAcc[mineral] += amount
+                const currentUsage = calcCurrentUsage()
+                const remainingSpace = warehouseCapacity - currentUsage
+
+                if (remainingSpace <= 0) {
+                  get().showNotification(`⚠️ 仓库已满！${cart.name} 无法卸载，货物滞留`, "error")
+                  cart.status = "idle"
+                  cart.routeId = null
+                  cart.currentTrackId = null
+                  cart.trackProgress = 0
+                  cart.assignedMineId = null
+                  cart.miningProgress = 0
+                  continue
+                }
+
+                const actualAmount = Math.min(amount, remainingSpace)
+                const overflowAmount = amount - actualAmount
+
+                if (actualAmount > 0) {
+                  const batch: InventoryBatch = {
+                    id: genId("batch"),
+                    mineralType: mineral,
+                    amount: actualAmount,
+                    dayStored: newDay,
+                    timeStored: newDayProgress,
+                  }
+                  newInventoryBatches.push(batch)
+                  newResources[mineral] = (newResources[mineral] || 0) + actualAmount
+                  if (!dailyCollectedAcc[mineral]) dailyCollectedAcc[mineral] = 0
+                  dailyCollectedAcc[mineral] += actualAmount
+                }
+
+                if (overflowAmount > 0) {
+                  cart.currentLoad = overflowAmount
+                  cart.miningProgress = 0
+                  get().showNotification(`⚠️ 仓库空间不足，${cart.name} 剩余 ${overflowAmount} 未卸载`, "error")
+                  continue
+                }
               }
               cart.currentLoad = 0
               cart.currentMineral = null
@@ -863,12 +910,14 @@ export const useGameStore = create<GameState & GameActions>()(
           day: newDay,
           dayProgress: newDayProgress % DAY_DURATION,
           resources: newResources,
+          inventoryBatches: newInventoryBatches,
           carts: newCarts,
           mineNodes: newMines,
           tracks: newTracks,
           conflicts: newConflicts,
           showSettlement,
           dailyCollected: dailyCollectedAcc,
+          dailyDiscarded: dailyDiscardedAcc,
           isPaused: newIsPaused || state.isPaused,
           totalCollected: newTotalCollected,
           accidents: newAccidents,
@@ -880,6 +929,7 @@ export const useGameStore = create<GameState & GameActions>()(
 
       endDay: () => {
         const state = get()
+        const mineralTypes: MineralType[] = ["he3", "titanium", "iron", "silicon"]
 
         const collected = { ...state.dailyCollected }
         let income = 0
@@ -946,6 +996,26 @@ export const useGameStore = create<GameState & GameActions>()(
           return s
         })
 
+        const inventoryChanges: DailyInventoryChange[] = []
+        for (const mt of mineralTypes) {
+          const batches = state.inventoryBatches.filter(b => b.mineralType === mt)
+          const endAmount = batches.reduce((sum, b) => sum + b.amount, 0)
+          const added = collected[mt] || 0
+          const discarded = state.dailyDiscarded[mt] || 0
+          const startAmount = Math.max(0, endAmount - added + discarded)
+          const removed = 0
+
+          inventoryChanges.push({
+            day: state.day,
+            mineralType: mt,
+            startAmount,
+            added,
+            removed,
+            discarded,
+            endAmount,
+          })
+        }
+
         const dayLog: DayLog = {
           day: state.day,
           income,
@@ -955,6 +1025,8 @@ export const useGameStore = create<GameState & GameActions>()(
           supplyCancelled: cancelledSupplies,
           recoveryDetails,
           supplyRefunds,
+          inventoryChanges,
+          discardedMinerals: { ...state.dailyDiscarded },
         }
 
         const newCarts = state.carts.map(c => {
@@ -991,6 +1063,7 @@ export const useGameStore = create<GameState & GameActions>()(
           isPaused: true,
           conflicts: [],
           dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
+          dailyDiscarded: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
           supplyQueue: newSupplyQueue,
           dailyRecoveryDetails: recoveryDetails,
           totalMiningIncome: newTotalMiningIncome,
@@ -1007,13 +1080,120 @@ export const useGameStore = create<GameState & GameActions>()(
         const state = get()
         if (state.resources[type] < amount) return
         const price = MINERAL_PRICES[type] * amount
+
+        let remainingToRemove = amount
+        const newBatches: InventoryBatch[] = []
+        const sortedBatches = [...state.inventoryBatches].sort((a, b) => {
+          if (a.dayStored !== b.dayStored) return a.dayStored - b.dayStored
+          return a.timeStored - b.timeStored
+        })
+        for (const batch of sortedBatches) {
+          if (batch.mineralType !== type) {
+            newBatches.push(batch)
+            continue
+          }
+          if (remainingToRemove <= 0) {
+            newBatches.push(batch)
+            continue
+          }
+          if (batch.amount <= remainingToRemove) {
+            remainingToRemove -= batch.amount
+          } else {
+            newBatches.push({ ...batch, amount: batch.amount - remainingToRemove })
+            remainingToRemove = 0
+          }
+        }
+
         set(s => ({
           resources: {
             ...s.resources,
             credits: s.resources.credits + price,
             [type]: s.resources[type] - amount,
           },
+          inventoryBatches: newBatches,
         }))
+      },
+
+      discardMinerals: (type, amount) => {
+        const state = get()
+        const currentAmount = state.inventoryBatches
+          .filter(b => b.mineralType === type)
+          .reduce((sum, b) => sum + b.amount, 0)
+        if (currentAmount <= 0 || amount <= 0) return
+
+        const actualAmount = Math.min(amount, currentAmount)
+        let remainingToRemove = actualAmount
+        const newBatches: InventoryBatch[] = []
+        const sortedBatches = [...state.inventoryBatches].sort((a, b) => {
+          if (a.dayStored !== b.dayStored) return a.dayStored - b.dayStored
+          return a.timeStored - b.timeStored
+        })
+        for (const batch of sortedBatches) {
+          if (batch.mineralType !== type) {
+            newBatches.push(batch)
+            continue
+          }
+          if (remainingToRemove <= 0) {
+            newBatches.push(batch)
+            continue
+          }
+          if (batch.amount <= remainingToRemove) {
+            remainingToRemove -= batch.amount
+          } else {
+            newBatches.push({ ...batch, amount: batch.amount - remainingToRemove })
+            remainingToRemove = 0
+          }
+        }
+
+        set(s => ({
+          resources: {
+            ...s.resources,
+            [type]: s.resources[type] - actualAmount,
+          },
+          inventoryBatches: newBatches,
+          dailyDiscarded: {
+            ...s.dailyDiscarded,
+            [type]: (s.dailyDiscarded[type] || 0) + actualAmount,
+          },
+        }))
+        get().showNotification(`已丢弃 ${actualAmount} 单位${MINERAL_NAMES[type]}`, "info")
+      },
+
+      discardBatch: (batchId) => {
+        const state = get()
+        const batch = state.inventoryBatches.find(b => b.id === batchId)
+        if (!batch) return
+
+        set(s => ({
+          resources: {
+            ...s.resources,
+            [batch.mineralType]: s.resources[batch.mineralType] - batch.amount,
+          },
+          inventoryBatches: s.inventoryBatches.filter(b => b.id !== batchId),
+          dailyDiscarded: {
+            ...s.dailyDiscarded,
+            [batch.mineralType]: (s.dailyDiscarded[batch.mineralType] || 0) + batch.amount,
+          },
+        }))
+        get().showNotification(`已丢弃批次（${batch.amount} 单位${MINERAL_NAMES[batch.mineralType]}）`, "info")
+      },
+
+      getWarehouseUsage: () => {
+        const state = get()
+        return state.inventoryBatches.reduce((sum, b) => sum + b.amount, 0)
+      },
+
+      getWarehouseRemaining: () => {
+        const state = get()
+        const usage = state.inventoryBatches.reduce((sum, b) => sum + b.amount, 0)
+        return Math.max(0, state.warehouseCapacity - usage)
+      },
+
+      getMineralAmount: (type) => {
+        const state = get()
+        return state.inventoryBatches
+          .filter(b => b.mineralType === type)
+          .reduce((sum, b) => sum + b.amount, 0)
       },
 
       showNotification: (message, type) => {
@@ -1293,6 +1473,9 @@ export const useGameStore = create<GameState & GameActions>()(
           day: 1,
           dayProgress: 0,
           resources: initialRes,
+          inventoryBatches: [],
+          warehouseCapacity: WAREHOUSE_CAPACITY,
+          dailyDiscarded: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
           mineNodes: filteredMines.map(m => ({ ...m, currentSupplyId: null })),
           tracks: [],
           carts: INITIAL_CARTS.map(c => ({ ...c, x: BASE_POSITION.x, y: BASE_POSITION.y })),
