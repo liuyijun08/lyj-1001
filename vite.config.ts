@@ -27,4 +27,10 @@ export default defineConfig({
     }), 
     tsconfigPaths()
   ],
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: [],
+    include: ['**/*.test.ts', '**/*.test.tsx'],
+  },
 })
