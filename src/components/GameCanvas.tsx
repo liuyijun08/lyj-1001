@@ -152,6 +152,24 @@ export default function GameCanvas() {
         ctx.shadowBlur = 16 + pulse * 10
         ctx.stroke()
         ctx.shadowBlur = 0
+
+        const label = "未连通轨道"
+        ctx.font = "bold 10px 'Noto Sans SC', sans-serif"
+        const labelW = ctx.measureText(label).width + 12
+        const labelX = mine.x - labelW / 2
+        const labelY = mine.y + NODE_RADIUS + 28
+        ctx.fillStyle = "#ff444433"
+        ctx.strokeStyle = "#ff444488"
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.roundRect(labelX, labelY, labelW, 18, 4)
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = "#ff6666"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+        ctx.fillText(label, mine.x, labelY + 9)
+        ctx.textBaseline = "alphabetic"
       } else if (isDragHover) {
         const pulse = Math.sin(Date.now() / 120) * 0.5 + 0.5
         ctx.beginPath()
@@ -162,6 +180,24 @@ export default function GameCanvas() {
         ctx.shadowBlur = 16 + pulse * 10
         ctx.stroke()
         ctx.shadowBlur = 0
+
+        const label = "可调度"
+        ctx.font = "bold 10px 'Noto Sans SC', sans-serif"
+        const labelW = ctx.measureText(label).width + 12
+        const labelX = mine.x - labelW / 2
+        const labelY = mine.y + NODE_RADIUS + 28
+        ctx.fillStyle = "#00ff8822"
+        ctx.strokeStyle = "#00ff8866"
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.roundRect(labelX, labelY, labelW, 18, 4)
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = "#00ff88"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+        ctx.fillText(label, mine.x, labelY + 9)
+        ctx.textBaseline = "alphabetic"
       } else if (isSelected || isTrackStart) {
         ctx.beginPath()
         ctx.arc(mine.x, mine.y, NODE_RADIUS + 8, 0, Math.PI * 2)
