@@ -227,51 +227,21 @@ export default function SidePanel() {
                   <span>速度 {cart.speed}</span>
                 </div>
 
-                {cart.status === "idle" && isSelected && (
-                  <div>
-                    {isLowBattery ? (
-                      <div className="bg-[#ff444411] border border-[#ff444433] rounded p-2 mb-2">
-                        <p className="text-[10px] text-[#ff6666] font-medium">电量低于20%，禁止派遣新任务</p>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            forceReturnCart(cart.id)
-                          }}
-                          className="mt-1.5 w-full flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold bg-[#ff444422] border border-[#ff4444] text-[#ff4444] hover:bg-[#ff444433] transition-colors"
-                        >
-                          <BatteryCharging size={10} />
-                          立即充电
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="text-[10px] text-[#6a7a9a] mb-1.5">分配到矿区：</p>
-                        <div className="flex flex-wrap gap-1">
-                          {reachableMines.map(mine => (
-                            <button
-                              key={mine.id}
-                              onClick={() => assignCartToMine(cart.id, mine.id)}
-                              className="text-[10px] px-2 py-1 rounded border transition-colors hover:bg-opacity-20"
-                              style={{
-                                color: MINERAL_COLORS[mine.mineralType],
-                                borderColor: `${MINERAL_COLORS[mine.mineralType]}44`,
-                                backgroundColor: `${MINERAL_COLORS[mine.mineralType]}11`,
-                              }}
-                            >
-                              {mine.name}
-                            </button>
-                          ))}
-                          {reachableMines.length === 0 && (
-                            <span className="text-[10px] text-[#4a5a7a]">暂无可达矿点，请先铺设轨道</span>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
+                {isLowBattery && cart.status === "idle" && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      forceReturnCart(cart.id)
+                    }}
+                    className="w-full flex items-center justify-center gap-1 py-1.5 rounded text-[10px] font-bold bg-[#ff444422] border border-[#ff4444] text-[#ff4444] hover:bg-[#ff444433] transition-colors mb-1.5"
+                  >
+                    <BatteryCharging size={10} />
+                    立即充电
+                  </button>
                 )}
 
                 {cart.status !== "idle" && cart.status !== "charging" && (
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1.5 mb-1.5">
                     {isLowBattery && (
                       <button
                         onClick={(e) => {
@@ -291,6 +261,37 @@ export default function SidePanel() {
                       召回矿车
                     </button>
                   </div>
+                )}
+
+                {cart.status === "idle" && isSelected && !isLowBattery && (
+                  <div>
+                    <p className="text-[10px] text-[#6a7a9a] mb-1.5">分配到矿区：</p>
+                    <div className="flex flex-wrap gap-1">
+                      {reachableMines.map(mine => (
+                        <button
+                          key={mine.id}
+                          onClick={() => assignCartToMine(cart.id, mine.id)}
+                          className="text-[10px] px-2 py-1 rounded border transition-colors hover:bg-opacity-20"
+                          style={{
+                            color: MINERAL_COLORS[mine.mineralType],
+                            borderColor: `${MINERAL_COLORS[mine.mineralType]}44`,
+                            backgroundColor: `${MINERAL_COLORS[mine.mineralType]}11`,
+                          }}
+                        >
+                          {mine.name}
+                        </button>
+                      ))}
+                      {reachableMines.length === 0 && (
+                        <span className="text-[10px] text-[#4a5a7a]">暂无可达矿点，请先铺设轨道</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {cart.status === "idle" && isSelected && isLowBattery && (
+                  <p className="text-[10px] text-[#ff6666] text-center">
+                    电量低于20%，禁止派遣新任务
+                  </p>
                 )}
               </div>
             )
