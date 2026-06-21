@@ -11,6 +11,7 @@ export interface MineNode {
   maxReserve: number
   x: number
   y: number
+  pendingSupply: boolean
 }
 
 export interface Track {

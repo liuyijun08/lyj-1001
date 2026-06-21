@@ -7,6 +7,7 @@ import {
   DAY_DURATION, MINING_SPEED, MINING_TIME, UNLOAD_TIME, CHARGE_TIME,
   CHARGE_COST, TRACK_COST_PER_UNIT, TRACK_MAINTENANCE_PER_UNIT,
   CART_MAINTENANCE, BASE_CHARGE_RATE, MAP_WIDTH, MAP_HEIGHT, NEW_CART_COST,
+  SUPPLY_PLAN_COST,
 } from "@/config/gameConfig"
 
 function calcDistance(x1: number, y1: number, x2: number, y2: number) {
@@ -73,6 +74,7 @@ interface GameActions {
   pauseLowSpeedCartInConflict: (conflictId: string) => void
   staggerDeparture: (conflictId: string) => void
   forceReturnCart: (cartId: string) => void
+  requestSupplyPlan: (mineId: string) => void
 }
 
 const initialState = {
@@ -549,10 +551,14 @@ export const useGameStore = create<GameState & GameActions>()(
           collected,
         }
 
-        const newMines = state.mineNodes.map(m => ({
-          ...m,
-          remaining: Math.min(m.maxReserve, m.remaining + m.dailyYield),
-        }))
+        const newMines = state.mineNodes.map(m => {
+          const supplyBonus = m.pendingSupply ? m.dailyYield : 0
+          return {
+            ...m,
+            remaining: Math.min(m.maxReserve, m.remaining + m.dailyYield + supplyBonus),
+            pendingSupply: false,
+          }
+        })
 
         const newCarts = state.carts.map(c => {
           const needsCharging = c.currentBattery < c.maxBattery * 0.5
@@ -775,6 +781,30 @@ export const useGameStore = create<GameState & GameActions>()(
           mineNodes: INITIAL_MINES.map(m => ({ ...m })),
           dailyCollected: { he3: 0, titanium: 0, iron: 0, silicon: 0 },
         })
+      },
+
+      requestSupplyPlan: (mineId) => {
+        const state = get()
+        const mine = state.mineNodes.find(m => m.id === mineId)
+        if (!mine) return
+
+        if (mine.pendingSupply) {
+          get().showNotification(`${mine.name} 已在补给队列中`, "info")
+          return
+        }
+
+        if (state.resources.credits < SUPPLY_PLAN_COST) {
+          get().showNotification("金币不足，无法执行补给计划", "error")
+          return
+        }
+
+        set(s => ({
+          resources: { ...s.resources, credits: s.resources.credits - SUPPLY_PLAN_COST },
+          mineNodes: s.mineNodes.map(m =>
+            m.id === mineId ? { ...m, pendingSupply: true } : m
+          ),
+        }))
+        get().showNotification(`${mine.name} 补给计划已安排，跨日生效`, "success")
       },
     }),
     {

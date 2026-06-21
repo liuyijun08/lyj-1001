@@ -1,10 +1,10 @@
 import { useGameStore } from "@/store/gameStore"
 import { MINERAL_NAMES, MINERAL_COLORS, MINERAL_PRICES, MineralType, CART_STATUS_LABELS } from "@/types/game"
-import { NEW_CART_COST } from "@/config/gameConfig"
+import { NEW_CART_COST, SUPPLY_PLAN_COST } from "@/config/gameConfig"
 import ConflictPanel from "@/components/ConflictPanel"
 import {
   Mountain, Truck, Route, Battery, Package, AlertTriangle,
-  Play, Square, ShoppingCart, Info, BatteryCharging
+  Play, Square, ShoppingCart, Info, BatteryCharging, Droplets
 } from "lucide-react"
 
 const mineralTypes: MineralType[] = ["he3", "titanium", "iron", "silicon"]
@@ -22,6 +22,7 @@ export default function SidePanel() {
   const unassignCart = useGameStore(s => s.unassignCart)
   const forceReturnCart = useGameStore(s => s.forceReturnCart)
   const buyCart = useGameStore(s => s.buyCart)
+  const requestSupplyPlan = useGameStore(s => s.requestSupplyPlan)
   const resources = useGameStore(s => s.resources)
   const conflicts = useGameStore(s => s.conflicts)
 
@@ -83,16 +84,24 @@ export default function SidePanel() {
           <div className="bg-[#0a0e1a] rounded-lg p-3 border border-[#1a2540]">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[#d4cfc4] text-sm font-medium">{selectedMine.name}</span>
-              <span
-                className="text-xs px-2 py-0.5 rounded-full border"
-                style={{
-                  color: MINERAL_COLORS[selectedMine.mineralType],
-                  borderColor: `${MINERAL_COLORS[selectedMine.mineralType]}44`,
-                  backgroundColor: `${MINERAL_COLORS[selectedMine.mineralType]}11`,
-                }}
-              >
-                {MINERAL_NAMES[selectedMine.mineralType]}
-              </span>
+              <div className="flex items-center gap-1.5">
+                {selectedMine.remaining / selectedMine.maxReserve < 0.2 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#ff444422] text-[#ff4444] border border-[#ff444444] animate-pulse flex items-center gap-1">
+                    <AlertTriangle size={9} />
+                    枯竭预警
+                  </span>
+                )}
+                <span
+                  className="text-xs px-2 py-0.5 rounded-full border"
+                  style={{
+                    color: MINERAL_COLORS[selectedMine.mineralType],
+                    borderColor: `${MINERAL_COLORS[selectedMine.mineralType]}44`,
+                    backgroundColor: `${MINERAL_COLORS[selectedMine.mineralType]}11`,
+                  }}
+                >
+                  {MINERAL_NAMES[selectedMine.mineralType]}
+                </span>
+              </div>
             </div>
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between">
@@ -101,7 +110,10 @@ export default function SidePanel() {
               </div>
               <div className="flex justify-between">
                 <span className="text-[#6a7a9a]">剩余储量</span>
-                <span className="text-[#d4cfc4]" style={{ fontFamily: "Orbitron, monospace" }}>{Math.round(selectedMine.remaining)}/{selectedMine.maxReserve}</span>
+                <span
+                  className={selectedMine.remaining / selectedMine.maxReserve < 0.2 ? "text-[#ff4444]" : "text-[#d4cfc4]"}
+                  style={{ fontFamily: "Orbitron, monospace" }}
+                >{Math.round(selectedMine.remaining)}/{selectedMine.maxReserve}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[#6a7a9a]">单价</span>
@@ -113,12 +125,35 @@ export default function SidePanel() {
                     className="h-full rounded-full transition-all"
                     style={{
                       width: `${(selectedMine.remaining / selectedMine.maxReserve) * 100}%`,
-                      backgroundColor: MINERAL_COLORS[selectedMine.mineralType],
+                      backgroundColor: selectedMine.remaining / selectedMine.maxReserve < 0.2 ? "#ff4444" : MINERAL_COLORS[selectedMine.mineralType],
                     }}
                   />
                 </div>
               </div>
             </div>
+            {selectedMine.remaining / selectedMine.maxReserve < 0.2 && (
+              <div className="mt-2.5">
+                {selectedMine.pendingSupply ? (
+                  <div className="flex items-center justify-center gap-1.5 py-1.5 rounded text-[10px] font-bold bg-[#00d4ff11] border border-[#00d4ff44] text-[#00d4ff]">
+                    <Droplets size={10} />
+                    补给已安排，跨日生效
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => requestSupplyPlan(selectedMine.id)}
+                    disabled={resources.credits < SUPPLY_PLAN_COST}
+                    className={`w-full flex items-center justify-center gap-1.5 py-1.5 rounded text-[10px] font-bold transition-colors ${
+                      resources.credits >= SUPPLY_PLAN_COST
+                        ? "bg-[#ffd70022] border border-[#ffd700] text-[#ffd700] hover:bg-[#ffd70033]"
+                        : "bg-[#0a0e1a] border border-[#1a2540] text-[#3a4a5a] cursor-not-allowed"
+                    }`}
+                  >
+                    <Droplets size={10} />
+                    补给计划 ({SUPPLY_PLAN_COST} 金币)
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
